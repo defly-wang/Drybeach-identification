@@ -333,9 +333,7 @@ class VideoExtractThread(QThread):
     
     def run(self):
         import subprocess
-        import tempfile
         import shutil
-        import time
         
         try:
             video_path = Path(self.video_path)
@@ -343,74 +341,54 @@ class VideoExtractThread(QThread):
             output_dir.mkdir(parents=True, exist_ok=True)
             
             fps = self.video_info.get('fps', 25)
-            total_frames = self.video_info.get('total_frames', 0)
+            duration = self.video_info.get('duration', 0)
             
-            temp_dir = Path(tempfile.mkdtemp(prefix='drybeach_'))
-            
-            try:
+            if self.mode == 'count':
                 target_count = self.value
-                if self.mode == 'count':
-                    frame_interval = total_frames // target_count if total_frames > 0 else 1
-                    frame_interval = max(1, frame_interval)
-                    select_filter = rf"not(mod(n\,{frame_interval}))"
-                    cmd = [
-                        'ffmpeg',
-                        '-i', str(video_path),
-                        '-vf', rf"select='{select_filter}'",
-                        '-q:v', '2',
-                        '-frames:v', str(target_count),
-                        '-threads', '4',
-                        '-y',
-                        str(temp_dir / "frame_%06d.jpg")
-                    ]
-                else:
-                    seconds_interval = self.value
-                    frame_interval = int(seconds_interval * fps)
-                    frame_interval = max(1, frame_interval)
-                    select_filter = rf"not(mod(n\,{frame_interval}))"
-                    cmd = [
-                        'ffmpeg',
-                        '-i', str(video_path),
-                        '-vf', rf"select='{select_filter}',scale=iw/2:ih/2",
-                        '-q:v', '2',
-                        '-threads', '4',
-                        '-y',
-                        str(temp_dir / "frame_%06d.jpg")
-                    ]
+                interval = duration / target_count if duration > 0 else 1.0
+                timestamps = [i * interval for i in range(target_count)]
+            else:
+                seconds_interval = self.value
+                timestamps = [i * seconds_interval for i in range(int(duration / seconds_interval) + 1)]
+            
+            saved_paths = []
+            total = len(timestamps)
+            
+            for i, timestamp in enumerate(timestamps):
+                if self._stop:
+                    break
                 
-                process = subprocess.Popen(
+                output_file = output_dir / f"{video_path.stem}_{i+1:06d}.jpg"
+                
+                cmd = [
+                    'ffmpeg',
+                    '-ss', f'{timestamp:.3f}',
+                    '-i', str(video_path),
+                    '-vframes', '1',
+                    '-q:v', '2',
+                    '-threads', '2',
+                    '-y',
+                    str(output_file)
+                ]
+                
+                result = subprocess.run(
                     cmd,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
-                process.wait()
                 
-                if process.returncode != 0:
-                    self.error_occurred.emit("FFmpeg执行失败")
-                    return
+                if result.returncode == 0 and output_file.exists():
+                    saved_paths.append(output_file)
+                    frame_num = int(timestamp * fps)
+                    self.frame_extracted.emit(frame_num, str(output_file))
                 
-                temp_files = sorted(temp_dir.glob("frame_*.jpg"))
-                
-                if not temp_files:
-                    self.error_occurred.emit("未提取到任何帧")
-                    return
-                
-                saved_paths = []
-                total = len(temp_files)
-                
-                for i, temp_file in enumerate(temp_files):
-                    dest_file = output_dir / f"{video_path.stem}_{temp_file.name}"
-                    shutil.move(str(temp_file), str(dest_file))
-                    saved_paths.append(dest_file)
-                    
-                    frame_num = i * frame_interval if self.mode == 'count' else int(i * self.value * fps)
-                    self.frame_extracted.emit(frame_num, str(dest_file))
-                    self.progress_updated.emit(int((i + 1) / total * 100))
-                
-                self.finished.emit(saved_paths)
-                
-            finally:
-                shutil.rmtree(temp_dir, ignore_errors=True)
+                self.progress_updated.emit(int((i + 1) / total * 100))
+            
+            if not saved_paths:
+                self.error_occurred.emit("未提取到任何帧")
+                return
+            
+            self.finished.emit(saved_paths)
             
         except FileNotFoundError:
             self.error_occurred.emit("未找到FFmpeg")
