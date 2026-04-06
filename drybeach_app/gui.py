@@ -753,10 +753,6 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         
         layout.addWidget(self.tabs)
         
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setMaximum(100)
-        layout.addWidget(self.progress_bar)
-        
         panel.setLayout(layout)
         return panel
     
@@ -956,7 +952,6 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         if not output_dir:
             return
         
-        self.progress_bar.setValue(0)
         self.statusBar().showMessage("正在识别...")
         
         calibration_data = None
@@ -977,7 +972,6 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
             'method': method
         })
         
-        self.processing_thread.progress_updated.connect(self.progress_bar.setValue)
         self.processing_thread.finished.connect(lambda x: self.on_detection_complete(x, output_dir))
         self.processing_thread.error_occurred.connect(self.on_error)
         
@@ -996,7 +990,6 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         if not model_save_dir:
             return
         
-        self.progress_bar.setValue(0)
         self.statusBar().showMessage("正在训练模型...")
         
         self.processing_thread = ProcessingThread('training', {
@@ -1005,18 +998,15 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
             'model_save': Path(model_save_dir) / 'best.pt'
         })
         
-        self.processing_thread.progress_updated.connect(self.progress_bar.setValue)
         self.processing_thread.finished.connect(lambda x: self.on_processing_complete(x, "训练完成"))
         self.processing_thread.error_occurred.connect(self.on_error)
         
         self.processing_thread.start()
     
     def on_processing_complete(self, results: list, message: str):
-        self.progress_bar.setValue(100)
         self.statusBar().showMessage(f"{message} - {len(results)} 个文件")
     
     def on_detection_complete(self, results: list, output_dir: str):
-        self.progress_bar.setValue(100)
         self.statusBar().showMessage(f"识别完成: {len(results)} 张图片")
         
         if results:
