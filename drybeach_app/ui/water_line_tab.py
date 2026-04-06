@@ -10,6 +10,7 @@ from PyQt6.QtCore import pyqtSignal
 
 class WaterLineTab(QWidget):
     result_ready = pyqtSignal(object)
+    image_loaded = pyqtSignal(str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -89,6 +90,7 @@ class WaterLineTab(QWidget):
                 self.btn_detect.setEnabled(True)
                 self.detected_line = None
                 self.lbl_result.setText("")
+                self.image_loaded.emit(file_path)
     
     def detect_water_line(self):
         if self.current_image is None:

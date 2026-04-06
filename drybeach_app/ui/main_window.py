@@ -151,7 +151,16 @@ class DryBeachGUI(QMainWindow):
     def _create_water_line_tab(self) -> WaterLineTab:
         tab = WaterLineTab()
         tab.result_ready.connect(self.on_water_line_result)
+        tab.image_loaded.connect(self.on_water_line_image_loaded)
         return tab
+    
+    def on_water_line_image_loaded(self, image_path: str):
+        self.current_image_path = Path(image_path)
+        self.current_image = cv2.imread(image_path)
+        if self.current_image is not None:
+            self.image_viewer.set_image(self.current_image)
+            h, w = self.current_image.shape[:2]
+            self.statusBar().showMessage(f"已加载: {self.current_image_path.name} ({w}x{h})")
     
     def on_water_line_result(self, result_image):
         self.annotated_image = result_image
@@ -159,7 +168,7 @@ class DryBeachGUI(QMainWindow):
     
     def on_mark_image_opened(self, image_path: str):
         self.mark_viewer.set_image(cv2.imread(image_path))
-        self.tabs.setCurrentIndex(1)
+        self.tabs.setCurrentIndex(2)
     
     def _create_center_panel(self) -> QWidget:
         panel = QWidget()
@@ -187,7 +196,7 @@ class DryBeachGUI(QMainWindow):
         return panel
     
     def on_tab_changed(self, index):
-        if index == 1:
+        if index == 2:
             self.scroll_area.hide()
             self.mark_viewer.show()
         else:
@@ -327,12 +336,12 @@ class DryBeachGUI(QMainWindow):
             self.statusBar().showMessage(f"已导出: {Path(file_path).name}")
     
     def run_detection(self):
-        self.tabs.setCurrentIndex(3)
+        self.tabs.setCurrentIndex(4)
         if hasattr(self.detection_tab, 'btn_run_detection'):
             self.detection_tab.btn_run_detection.click()
     
     def train_model(self):
-        self.tabs.setCurrentIndex(2)
+        self.tabs.setCurrentIndex(3)
 
 
 def launch_gui():
