@@ -378,10 +378,11 @@ class MarkImageViewer(QWidget):
         pos = event.position().toPoint()
         
         if event.button() == Qt.MouseButton.RightButton:
-            if self.mode == 'draw' and self.current_category and self.polygon_points:
-                self.polygon_points.pop()
-                self._mouse_pos = None
-                self._update_display()
+            if self.mode == 'draw' and self.current_category:
+                if self.polygon_points:
+                    self.polygon_points.pop()
+                    self._mouse_pos = None
+                    self._update_display()
             else:
                 self.scroll_area.wheelEvent(event)
             return
