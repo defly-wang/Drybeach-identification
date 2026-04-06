@@ -329,24 +329,25 @@ class VideoExtractThread(QThread):
         self.value = value
         self.output_dir = output_dir
         self.video_info = video_info
+        self._stop = False
     
     def run(self):
         import subprocess
         import tempfile
         import shutil
+        import re
         
         try:
             video_path = Path(self.video_path)
             output_dir = self.output_dir
             output_dir.mkdir(parents=True, exist_ok=True)
             
+            fps = self.video_info.get('fps', 25)
+            total_frames = self.video_info.get('total_frames', 0)
+            
             temp_dir = Path(tempfile.mkdtemp(prefix='drybeach_'))
             
             try:
-                saved_paths = []
-                fps = self.video_info.get('fps', 25)
-                total_frames = self.video_info.get('total_frames', 0)
-                
                 if self.mode == 'count':
                     frame_interval = total_frames // self.value if total_frames > 0 else 1
                     frame_interval = max(1, frame_interval)
@@ -355,9 +356,9 @@ class VideoExtractThread(QThread):
                         'ffmpeg',
                         '-i', str(video_path),
                         '-vf', rf"select='{select_filter}'",
-                        '-vsync', '0',
                         '-q:v', '2',
                         '-frames:v', str(self.value),
+                        '-threads', '4',
                         '-y',
                         str(temp_dir / "frame_%06d.jpg")
                     ]
@@ -370,8 +371,8 @@ class VideoExtractThread(QThread):
                         'ffmpeg',
                         '-i', str(video_path),
                         '-vf', rf"select='{select_filter}',scale=iw/2:ih/2",
-                        '-vsync', '0',
                         '-q:v', '2',
+                        '-threads', '4',
                         '-y',
                         str(temp_dir / "frame_%06d.jpg")
                     ]
@@ -383,10 +384,27 @@ class VideoExtractThread(QThread):
                     universal_newlines=True
                 )
                 
-                stdout, stderr = process.communicate()
+                stderr_output = []
+                while True:
+                    line = process.stderr.readline()
+                    if not line and process.poll() is not None:
+                        break
+                    if line:
+                        stderr_output.append(line)
+                        if 'frame=' in line:
+                            match = re.search(r'frame=\s*(\d+)', line)
+                            if match:
+                                frame_count = int(match.group(1))
+                                if self.mode == 'count' and self.value > 0:
+                                    pct = min(98, int(frame_count / self.value * 100))
+                                else:
+                                    pct = min(98, int(frame_count / (total_frames / frame_interval + 1) * 100))
+                                self.progress_updated.emit(pct)
+                
+                process.wait()
                 
                 if process.returncode != 0:
-                    error_msg = f"FFmpeg错误: {stderr[-500:]}"
+                    error_msg = f"FFmpeg错误: {''.join(stderr_output)[-500:]}"
                     self.error_occurred.emit(error_msg)
                     return
                 
@@ -396,15 +414,16 @@ class VideoExtractThread(QThread):
                     self.error_occurred.emit("未提取到任何帧，请检查视频文件")
                     return
                 
+                saved_paths = []
                 for i, temp_file in enumerate(temp_files):
                     dest_file = output_dir / f"{video_path.stem}_{temp_file.name}"
-                    shutil.copy2(temp_file, dest_file)
+                    shutil.move(str(temp_file), str(dest_file))
                     saved_paths.append(dest_file)
                     
                     frame_num = i * frame_interval if self.mode == 'count' else int(i * seconds_interval * fps)
                     self.frame_extracted.emit(frame_num, str(dest_file))
-                    self.progress_updated.emit(int((i + 1) / len(temp_files) * 100))
                 
+                self.progress_updated.emit(100)
                 self.finished.emit(saved_paths)
                 
             finally:
@@ -656,7 +675,6 @@ class VideoExtractWidget(QWidget):
         self.btn_extract.setEnabled(True)
         self.progress_bar.setValue(100)
         self.status_updated.emit(f"提取完成! 已保存 {len(saved_paths)} 帧到 {self.save_dir}")
-        QMessageBox.information(self, "完成", f"已提取 {len(saved_paths)} 帧\n保存至: {self.save_dir}")
     
     def on_error(self, error_msg: str):
         self.btn_extract.setEnabled(True)
