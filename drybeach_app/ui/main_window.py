@@ -18,6 +18,7 @@ from .mark_tab import MarkSegmentationWidget
 from .detection_tab import DetectionTab
 from .calibration_tab import CalibrationTab
 from .training_tab import TrainingTab
+from .water_line_tab import WaterLineTab
 
 
 class DryBeachGUI(QMainWindow):
@@ -57,7 +58,7 @@ class DryBeachGUI(QMainWindow):
         center_panel = self._create_center_panel()
         main_layout.addWidget(center_panel, 3)
         
-        self.mark_widget.set_image_viewer(self.mark_viewer)
+        self.mark_tab.set_image_viewer(self.mark_viewer)
         
         self.statusBar().showMessage("就绪")
     
@@ -105,6 +106,9 @@ class DryBeachGUI(QMainWindow):
         self.video_extract_widget.status_updated.connect(self.statusBar().showMessage)
         self.tabs.addTab(self.video_extract_widget, "视频提取")
         
+        self.water_line_tab = self._create_water_line_tab()
+        self.tabs.addTab(self.water_line_tab, "水线检测")
+        
         self.mark_tab = self._create_mark_segment_tab()
         self.tabs.addTab(self.mark_tab, "标记分割")
         
@@ -143,6 +147,15 @@ class DryBeachGUI(QMainWindow):
         tab = TrainingTab()
         tab.training_requested.connect(self.on_training_requested)
         return tab
+    
+    def _create_water_line_tab(self) -> WaterLineTab:
+        tab = WaterLineTab()
+        tab.result_ready.connect(self.on_water_line_result)
+        return tab
+    
+    def on_water_line_result(self, result_image):
+        self.annotated_image = result_image
+        self.image_viewer.set_image(result_image)
     
     def on_mark_image_opened(self, image_path: str):
         self.mark_viewer.set_image(cv2.imread(image_path))

@@ -5,6 +5,7 @@ from .mark_tab import MarkSegmentationWidget
 from .detection_tab import DetectionTab
 from .calibration_tab import CalibrationTab
 from .training_tab import TrainingTab
+from .water_line_tab import WaterLineTab
 from .main_window import DryBeachGUI, launch_gui
 
 __all__ = [
@@ -17,6 +18,7 @@ __all__ = [
     'DetectionTab',
     'CalibrationTab',
     'TrainingTab',
+    'WaterLineTab',
     'DryBeachGUI',
     'launch_gui',
 ]
