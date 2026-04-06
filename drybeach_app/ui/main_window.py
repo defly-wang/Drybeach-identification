@@ -105,14 +105,14 @@ class DryBeachGUI(QMainWindow):
         mark_tab = self._create_mark_segment_tab()
         self.tabs.addTab(mark_tab, "标记分割")
         
+        training_tab = self._create_training_tab()
+        self.tabs.addTab(training_tab, "模型训练")
+        
         detection_tab = self._create_detection_tab()
         self.tabs.addTab(detection_tab, "识别")
         
         calibration_tab = self._create_calibration_tab()
         self.tabs.addTab(calibration_tab, "校准")
-        
-        training_tab = self._create_training_tab()
-        self.tabs.addTab(training_tab, "训练")
         
         layout.addWidget(self.tabs)
         
