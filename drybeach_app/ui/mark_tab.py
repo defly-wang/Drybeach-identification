@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import cv2
+import numpy as np
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
                              QFileDialog, QMessageBox)
 from PyQt6.QtCore import pyqtSignal
@@ -104,10 +105,12 @@ class MarkSegmentationWidget(QWidget):
         self._viewer.current_category = category if self.category_buttons[category].isChecked() else None
         
         if self.category_buttons[category].isChecked():
-            self.lbl_info.setText(f"当前类别: {category}，在图像上拖动画矩形区域")
+            self._viewer.polygon_points = []
+            self.lbl_info.setText(f"当前类别: {category}，点击添加多边形顶点，双击完成选区")
         else:
             self._viewer.mode = 'normal'
-            self.lbl_info.setText("提示: 打开图片后，选择类别，用鼠标拖动画矩形区域标记")
+            self._viewer.polygon_points = []
+            self.lbl_info.setText("提示: 打开图片后，选择类别，点击添加多边形顶点，双击完成")
     
     def clear_all(self):
         if self._viewer:
@@ -137,14 +140,21 @@ class MarkSegmentationWidget(QWidget):
         original_name = Path(self.current_image_path).stem
         
         total_saved = 0
-        for category, rects in regions.items():
-            if not rects:
+        for category, polygons in regions.items():
+            if not polygons:
                 continue
             
             category_dir = output_dir / category
             category_dir.mkdir(parents=True, exist_ok=True)
             
-            for i, (x, y, w, h) in enumerate(rects):
+            for i, polygon_data in enumerate(polygons):
+                points = polygon_data['points']
+                if len(points) < 3:
+                    continue
+                
+                pts = np.array(points, dtype=np.int32)
+                
+                x, y, w, h = cv2.boundingRect(pts)
                 x = max(0, x)
                 y = max(0, y)
                 w = min(w, self._viewer.current_image.shape[1] - x)
@@ -153,11 +163,17 @@ class MarkSegmentationWidget(QWidget):
                 if w <= 0 or h <= 0:
                     continue
                 
+                mask = np.zeros(self._viewer.current_image.shape[:2], dtype=np.uint8)
+                cv2.fillPoly(mask, [pts], 255)
+                
                 roi = self._viewer.current_image[y:y+h, x:x+w]
+                mask_roi = mask[y:y+h, x:x+w]
                 
                 if roi.size > 0:
+                    roi_masked = cv2.bitwise_and(roi, roi, mask=mask_roi)
+                    
                     output_file = category_dir / f"{original_name}_{category}_{i+1}.jpg"
-                    cv2.imwrite(str(output_file), roi)
+                    cv2.imwrite(str(output_file), roi_masked)
                     total_saved += 1
         
         self.lbl_info.setText(f"已分割保存 {total_saved} 张图片到 {output_dir}")

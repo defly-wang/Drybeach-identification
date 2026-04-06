@@ -238,8 +238,7 @@ class MarkImageViewer(QLabel):
             '坝体': (255, 100, 0)
         }
         
-        self.draw_start = None
-        self.draw_end = None
+        self.polygon_points = []
         self.is_panning = False
         self.pan_start = None
         
@@ -297,32 +296,39 @@ class MarkImageViewer(QLabel):
         painter = QPainter(overlay)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
         
-        for category, regions in self.regions.items():
+        for category, polygons in self.regions.items():
             color = self.region_colors.get(category, (255, 255, 0))
             qt_color = QColor(*reversed(color))
             painter.setPen(QPen(qt_color, 2))
             
-            for rect in regions:
-                x, y, w, h = rect
-                painter.drawRect(int(x), int(y), int(w), int(h))
-                
-                painter.setPen(QPen(qt_color, 1))
-                font = painter.font()
-                font.setPointSize(10)
-                painter.setFont(font)
-                painter.drawText(int(x) + 5, int(y) + 15, category)
+            for polygon in polygons:
+                points = polygon['points']
+                if len(points) >= 3:
+                    for i in range(len(points)):
+                        p1 = points[i]
+                        p2 = points[(i + 1) % len(points)]
+                        painter.drawLine(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
+                    
+                    min_x = min(p[0] for p in points)
+                    min_y = min(p[1] for p in points)
+                    painter.setPen(QPen(qt_color, 1))
+                    font = painter.font()
+                    font.setPointSize(10)
+                    painter.setFont(font)
+                    painter.drawText(int(min_x) + 5, int(min_y) + 15, category)
         
-        if self.draw_start and self.draw_end and self.mode == 'draw':
-            x1 = min(self.draw_start.x(), self.draw_end.x())
-            y1 = min(self.draw_start.y(), self.draw_end.y())
-            x2 = max(self.draw_start.x(), self.draw_end.x())
-            y2 = max(self.draw_start.y(), self.draw_end.y())
+        if self.mode == 'draw' and self.current_category and self.polygon_points:
+            color = self.region_colors.get(self.current_category, (255, 255, 0))
+            qt_color = QColor(*reversed(color))
+            painter.setPen(QPen(qt_color, 2))
             
-            if self.current_category:
-                color = self.region_colors.get(self.current_category, (255, 255, 0))
-                qt_color = QColor(*reversed(color))
-                painter.setPen(QPen(qt_color, 2))
-                painter.drawRect(int(x1), int(y1), int(x2 - x1), int(y2 - y1))
+            for i in range(len(self.polygon_points) - 1):
+                p1 = self.polygon_points[i]
+                p2 = self.polygon_points[i + 1]
+                painter.drawLine(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
+            
+            for pt in self.polygon_points:
+                painter.drawEllipse(int(pt[0]) - 3, int(pt[1]) - 3, 6, 6)
         
         painter.end()
         return overlay
@@ -352,8 +358,13 @@ class MarkImageViewer(QLabel):
             return
         
         if self.mode == 'draw' and self.current_category:
-            self.draw_start = pos
-            self.draw_end = pos
+            if event.button() == Qt.MouseButton.LeftButton:
+                img_x = int((pos.x() - self.offset_x) / self._zoom_factor)
+                img_y = int((pos.y() - self.offset_y) / self._zoom_factor)
+                img_x = max(0, min(img_x, self.current_pixmap.width()))
+                img_y = max(0, min(img_y, self.current_pixmap.height()))
+                self.polygon_points.append((img_x, img_y))
+                self._update_display()
     
     def mouseMoveEvent(self, event):
         if self.current_pixmap is None:
@@ -368,11 +379,6 @@ class MarkImageViewer(QLabel):
             self.offset_y += dy
             self.pan_start = pos
             self._update_display()
-            return
-        
-        if self.mode == 'draw' and self.draw_start:
-            self.draw_end = pos
-            self._update_display()
     
     def mouseReleaseEvent(self, event):
         if self.current_pixmap is None:
@@ -381,33 +387,22 @@ class MarkImageViewer(QLabel):
         if event.button() == Qt.MouseButton.RightButton:
             self.is_panning = False
             self.pan_start = None
+    
+    def mouseDoubleClickEvent(self, event):
+        if self.current_pixmap is None:
             return
         
-        if self.mode == 'draw' and self.draw_start and self.draw_end and self.current_category:
-            x1 = min(self.draw_start.x(), self.draw_end.x())
-            y1 = min(self.draw_start.y(), self.draw_end.y())
-            x2 = max(self.draw_start.x(), self.draw_end.x())
-            y2 = max(self.draw_start.y(), self.draw_end.y())
+        if event.button() == Qt.MouseButton.LeftButton and self.mode == 'draw' and self.current_category:
+            if len(self.polygon_points) >= 3:
+                self.regions[self.current_category].append({
+                    'points': list(self.polygon_points)
+                })
+                self.region_drawn.emit(self.current_category, self.polygon_points)
             
-            if abs(x2 - x1) > 5 and abs(y2 - y1) > 5:
-                img_x1 = int((x1 - self.offset_x) / self._zoom_factor)
-                img_y1 = int((y1 - self.offset_y) / self._zoom_factor)
-                img_x2 = int((x2 - self.offset_x) / self._zoom_factor)
-                img_y2 = int((y2 - self.offset_y) / self._zoom_factor)
-                
-                img_x1 = max(0, img_x1)
-                img_y1 = max(0, img_y1)
-                img_x2 = min(self.current_pixmap.width(), img_x2)
-                img_y2 = min(self.current_pixmap.height(), img_y2)
-                
-                rect = (img_x1, img_y1, img_x2 - img_x1, img_y2 - img_y1)
-                self.regions[self.current_category].append(rect)
-                self.region_drawn.emit(self.current_category, rect)
-            
-            self.draw_start = None
-            self.draw_end = None
+            self.polygon_points = []
             self._update_display()
     
     def clear_regions(self):
         self.regions = {'水面': [], '摊面': [], '分界线': [], '坝体': []}
+        self.polygon_points = []
         self._update_display()
