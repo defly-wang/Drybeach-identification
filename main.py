@@ -66,7 +66,7 @@ def main():
 
 def run_gui():
     logger.info("启动GUI界面...")
-    from drybeach_app.gui import launch_gui
+    from drybeach_app.ui import launch_gui
     launch_gui()
 
 
