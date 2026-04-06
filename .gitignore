@@ -2,3 +2,8 @@
 /models
 /outputs
 /venv
+*__pycache__
+*.pyc
+*.pyo
+*.pyd
+*\__pycache__
