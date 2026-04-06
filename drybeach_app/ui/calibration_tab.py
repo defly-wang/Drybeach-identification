@@ -1,5 +1,6 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QDoubleSpinBox)
+from PyQt6.QtCore import pyqtSignal
 
 
 class CalibrationTab(QWidget):
