@@ -437,7 +437,7 @@ class MarkImageViewer(QWidget):
 
 
 class WaterLineViewer(QWidget):
-    line_drawn = pyqtSignal(list)
+    region_drawn = pyqtSignal(str, tuple)
     
     def __init__(self):
         super().__init__()
@@ -445,8 +445,13 @@ class WaterLineViewer(QWidget):
         self.current_pixmap = None
         self.displayed_size = QSize()
         
-        self.mode = 'draw'
-        self.line_points = []
+        self.mode = 'normal'
+        self.polygon_points = []
+        self.regions = {'检测区域': []}
+        self.region_colors = {
+            '检测区域': (0, 255, 0)
+        }
+        self.current_category = None
         self._mouse_pos = None
         
         self._zoom_factor = 1.0
@@ -459,6 +464,18 @@ class WaterLineViewer(QWidget):
         self.canvas.mouseMoveEvent = self._canvas_mouse_move
         self.canvas.mouseReleaseEvent = self._canvas_mouse_release
         self.canvas.mouseDoubleClickEvent = self._canvas_double_click
+    
+    def set_mode(self, mode: str):
+        self.mode = mode
+        self.polygon_points = []
+        self._mouse_pos = None
+        self._update_display()
+    
+    def clear_regions(self):
+        self.regions = {'检测区域': []}
+        self.polygon_points = []
+        self._mouse_pos = None
+        self._update_display()
     
     def _setup_ui(self):
         self.scroll_area = QScrollArea()
@@ -529,29 +546,50 @@ class WaterLineViewer(QWidget):
         scale_x = self.displayed_size.width() / self.current_pixmap.width() if self.current_pixmap.width() > 0 else 1.0
         scale_y = self.displayed_size.height() / self.current_pixmap.height() if self.current_pixmap.height() > 0 else 1.0
         
-        if self.line_points and len(self.line_points) >= 2:
-            qt_color = QColor(0, 255, 255)
-            painter.setPen(QPen(qt_color, 3))
+        for category, polygons in self.regions.items():
+            color = self.region_colors.get(category, (0, 255, 0))
+            qt_color = QColor(*reversed(color))
+            painter.setPen(QPen(qt_color, 2))
             
-            disp_points = [(int(px * scale_x), int(py * scale_y)) for px, py in self.line_points]
+            for polygon in polygons:
+                points = polygon['points']
+                if len(points) >= 3:
+                    for i in range(len(points)):
+                        p1 = points[i]
+                        p2 = points[(i + 1) % len(points)]
+                        painter.drawLine(int(p1[0] * scale_x), int(p1[1] * scale_y),
+                                        int(p2[0] * scale_x), int(p2[1] * scale_y))
+                    
+                    min_x = min(p[0] * scale_x for p in points)
+                    min_y = min(p[1] * scale_y for p in points)
+                    painter.setPen(QPen(qt_color, 1))
+                    font = painter.font()
+                    font.setPointSize(10)
+                    painter.setFont(font)
+                    painter.drawText(int(min_x) + 5, int(min_y) + 15, category)
+        
+        if self.mode == 'draw' and self.current_category and self.polygon_points:
+            color = self.region_colors.get(self.current_category, (0, 255, 0))
+            qt_color = QColor(*reversed(color))
+            
+            disp_points = [(int(px * scale_x), int(py * scale_y)) for px, py in self.polygon_points]
             
             for i in range(len(disp_points) - 1):
                 p1 = disp_points[i]
                 p2 = disp_points[i + 1]
+                painter.setPen(QPen(qt_color, 2))
                 painter.drawLine(p1[0], p1[1], p2[0], p2[1])
             
+            if self._mouse_pos and len(disp_points) > 0:
+                last_pt = disp_points[-1]
+                preview_color = QColor(255, 255, 255)
+                painter.setPen(QPen(preview_color, 1))
+                painter.drawLine(last_pt[0], last_pt[1], int(self._mouse_pos[0]), int(self._mouse_pos[1]))
+            
             for pt in disp_points:
-                painter.setPen(QPen(qt_color, 3))
+                painter.setPen(QPen(qt_color, 2))
                 painter.setBrush(qt_color)
                 painter.drawEllipse(pt[0] - 5, pt[1] - 5, 10, 10)
-        
-        if self._mouse_pos and self.line_points:
-            qt_color = QColor(0, 255, 255)
-            if self.line_points:
-                last_pt = self.line_points[-1]
-                disp_last = (int(last_pt[0] * scale_x), int(last_pt[1] * scale_y))
-                painter.setPen(QPen(qt_color, 1))
-                painter.drawLine(disp_last[0], disp_last[1], int(self._mouse_pos[0]), int(self._mouse_pos[1]))
         
         painter.end()
         return overlay
@@ -576,19 +614,22 @@ class WaterLineViewer(QWidget):
         pos = event.position().toPoint()
         
         if event.button() == Qt.MouseButton.RightButton:
-            if self.line_points:
-                self.line_points.pop()
-                self._update_display()
+            if self.mode == 'draw' and self.current_category:
+                if self.polygon_points:
+                    self.polygon_points.pop()
+                    self._mouse_pos = None
+                    self._update_display()
             return
         
-        if event.button() == Qt.MouseButton.LeftButton:
-            if 0 <= pos.x() < self.displayed_size.width() and 0 <= pos.y() < self.displayed_size.height():
-                scale_x = self.current_pixmap.width() / self.displayed_size.width() if self.displayed_size.width() > 0 else 1.0
-                scale_y = self.current_pixmap.height() / self.displayed_size.height() if self.displayed_size.height() > 0 else 1.0
-                img_x = int(pos.x() * scale_x)
-                img_y = int(pos.y() * scale_y)
-                self.line_points.append((img_x, img_y))
-                self._update_display()
+        if self.mode == 'draw' and self.current_category:
+            if event.button() == Qt.MouseButton.LeftButton:
+                if 0 <= pos.x() < self.displayed_size.width() and 0 <= pos.y() < self.displayed_size.height():
+                    scale_x = self.current_pixmap.width() / self.displayed_size.width() if self.displayed_size.width() > 0 else 1.0
+                    scale_y = self.current_pixmap.height() / self.displayed_size.height() if self.displayed_size.height() > 0 else 1.0
+                    img_x = int(pos.x() * scale_x)
+                    img_y = int(pos.y() * scale_y)
+                    self.polygon_points.append((img_x, img_y))
+                    self._update_display()
     
     def _canvas_mouse_move(self, event):
         if self.current_pixmap is None:
@@ -596,12 +637,12 @@ class WaterLineViewer(QWidget):
         
         pos = event.position().toPoint()
         
-        if 0 <= pos.x() < self.displayed_size.width() and 0 <= pos.y() < self.displayed_size.height():
-            self._mouse_pos = (pos.x(), pos.y())
-        else:
-            self._mouse_pos = None
-        
-        self._update_display()
+        if self.mode == 'draw' and self.current_category and self.polygon_points:
+            if 0 <= pos.x() < self.displayed_size.width() and 0 <= pos.y() < self.displayed_size.height():
+                self._mouse_pos = (pos.x(), pos.y())
+            else:
+                self._mouse_pos = None
+            self._update_display()
     
     def _canvas_mouse_release(self, event):
         pass
@@ -610,10 +651,18 @@ class WaterLineViewer(QWidget):
         if self.current_pixmap is None:
             return
         
-        if event.button() == Qt.MouseButton.LeftButton and len(self.line_points) >= 2:
-            self.line_drawn.emit(list(self.line_points))
+        if event.button() == Qt.MouseButton.LeftButton and self.mode == 'draw' and self.current_category:
+            if len(self.polygon_points) >= 3:
+                self.regions[self.current_category].append({
+                    'points': list(self.polygon_points)
+                })
+                self.region_drawn.emit(self.current_category, tuple(self.polygon_points))
+            
+            self.polygon_points = []
+            self._mouse_pos = None
+            self._update_display()
     
     def clear_line(self):
-        self.line_points = []
+        self.polygon_points = []
         self._mouse_pos = None
         self._update_display()
