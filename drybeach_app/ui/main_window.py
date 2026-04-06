@@ -53,11 +53,11 @@ class DryBeachGUI(QMainWindow):
         main_layout = QHBoxLayout()
         central_widget.setLayout(main_layout)
         
-        left_panel = self._create_left_panel()
-        main_layout.addWidget(left_panel, 1)
-        
         center_panel = self._create_center_panel()
         main_layout.addWidget(center_panel, 3)
+        
+        left_panel = self._create_left_panel()
+        main_layout.addWidget(left_panel, 1)
         
         self.mark_tab.set_image_viewer(self.mark_viewer)
         
