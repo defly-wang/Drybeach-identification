@@ -3,7 +3,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-                             QFileDialog, QMessageBox, QComboBox, QSpinBox, QProgressDialog)
+                             QFileDialog, QMessageBox, QComboBox, QSpinBox, QProgressBar)
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
 
 from .viewers import MarkImageViewer
@@ -155,6 +155,10 @@ class MarkSegmentationWidget(QWidget):
         self.btn_segment.setEnabled(False)
         layout.addWidget(self.btn_segment)
         
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        layout.addWidget(self.progress_bar)
+        
         self.lbl_info = QLabel("提示: 打开图片后，用多边形标记区域，再设置切片尺寸和步长进行分割")
         self.lbl_info.setStyleSheet("color: #888; font-size: 11px;")
         self.lbl_info.setWordWrap(True)
@@ -228,11 +232,10 @@ class MarkSegmentationWidget(QWidget):
         img_h, img_w = img.shape[:2]
         total_steps = ((img_h - patch_size) // stride + 1) * ((img_w - patch_size) // stride + 1)
         
-        self.progress_dialog = QProgressDialog("正在分割图像...", "取消", 0, total_steps, self)
-        self.progress_dialog.setWindowTitle("处理中")
-        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
-        self.progress_dialog.setMinimumDuration(0)
-        self.progress_dialog.setValue(0)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setMaximum(total_steps)
+        self.progress_bar.setValue(0)
+        self.btn_segment.setEnabled(False)
         
         self._segment_thread = SegmentationThread(
             img, regions, output_dir, original_name, patch_size, stride, self.category_safe_names
@@ -240,28 +243,23 @@ class MarkSegmentationWidget(QWidget):
         self._segment_thread.progress.connect(self._on_segment_progress)
         self._segment_thread.finished.connect(self._on_segment_finished)
         self._segment_thread.error.connect(self._on_segment_error)
-        self.progress_dialog.canceled.connect(self._on_segment_canceled)
         self._segment_thread.start()
     
     def _on_segment_progress(self, current, total):
-        self.progress_dialog.setValue(current)
-        self.progress_dialog.setLabelText(f"正在分割图像... {current}/{total}")
+        self.progress_bar.setValue(current)
+        self.lbl_info.setText(f"正在分割图像... {current}/{total}")
     
     def _on_segment_finished(self, counts):
-        self.progress_dialog.close()
+        self.progress_bar.setVisible(False)
+        self.btn_segment.setEnabled(True)
         total_saved = sum(counts.values())
         self.lbl_info.setText(f"已分割保存 {total_saved} 张图片: 水面{counts.get('水面',0)} 滩面{counts.get('摊面',0)} 分界线{counts.get('分界线',0)} 坝体{counts.get('坝体',0)}")
         QMessageBox.information(self, "完成", f"已分割保存 {total_saved} 张图片")
     
     def _on_segment_error(self, error_msg):
-        self.progress_dialog.close()
+        self.progress_bar.setVisible(False)
+        self.btn_segment.setEnabled(True)
         QMessageBox.critical(self, "错误", f"分割失败: {error_msg}")
-    
-    def _on_segment_canceled(self):
-        if hasattr(self, '_segment_thread') and self._segment_thread.isRunning():
-            self._segment_thread.terminate()
-            self._segment_thread.wait()
-        self.lbl_info.setText("已取消分割")
     
     def set_image_viewer(self, viewer: MarkImageViewer):
         self._viewer = viewer
