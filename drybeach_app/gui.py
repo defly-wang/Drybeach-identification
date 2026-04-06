@@ -483,10 +483,6 @@ class VideoExtractWidget(QWidget):
         self.btn_extract.setEnabled(False)
         layout.addWidget(self.btn_extract)
         
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setMaximum(100)
-        layout.addWidget(self.progress_bar)
-        
         lbl_preview = QLabel("提取预览:")
         lbl_preview.setStyleSheet("font-weight: bold;")
         layout.addWidget(lbl_preview)
@@ -607,7 +603,6 @@ class VideoExtractWidget(QWidget):
         mode = 'count' if self.radio_count.isChecked() else 'interval'
         value = self.spin_count.value() if mode == 'count' else int(self.spin_interval.value() * self.video_info['fps'])
         
-        self.progress_bar.setValue(0)
         self.btn_extract.setEnabled(False)
         self.list_thumbnails.clear()
         self.extracted_frames = []
@@ -616,7 +611,6 @@ class VideoExtractWidget(QWidget):
         self.extract_thread = VideoExtractThread(
             self.video_path, mode, value, self.save_dir, self.video_info
         )
-        self.extract_thread.progress_updated.connect(self.progress_bar.setValue)
         self.extract_thread.frame_extracted.connect(self.add_thumbnail)
         self.extract_thread.finished.connect(self.on_extraction_complete)
         self.extract_thread.error_occurred.connect(self.on_error)
@@ -656,7 +650,6 @@ class VideoExtractWidget(QWidget):
                 self.thumbnail_clicked.emit(path)
     
     def on_extraction_complete(self, saved_paths: List[Path]):
-        self.progress_bar.setValue(100)
         self.btn_extract.setEnabled(True)
         self.lbl_status.setText(f"提取完成! 已保存 {len(saved_paths)} 帧到 {self.save_dir}")
         QMessageBox.information(self, "完成", f"已提取 {len(saved_paths)} 帧\n保存至: {self.save_dir}")
