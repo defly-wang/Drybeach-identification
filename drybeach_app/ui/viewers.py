@@ -241,6 +241,7 @@ class MarkImageViewer(QLabel):
         self.polygon_points = []
         self.is_panning = False
         self.pan_start = None
+        self._mouse_pos = None
         
         self._zoom_factor = 1.0
         self._min_zoom = 0.1
@@ -320,15 +321,23 @@ class MarkImageViewer(QLabel):
         if self.mode == 'draw' and self.current_category and self.polygon_points:
             color = self.region_colors.get(self.current_category, (255, 255, 0))
             qt_color = QColor(*reversed(color))
-            painter.setPen(QPen(qt_color, 2))
             
             for i in range(len(self.polygon_points) - 1):
                 p1 = self.polygon_points[i]
                 p2 = self.polygon_points[i + 1]
+                painter.setPen(QPen(qt_color, 2))
                 painter.drawLine(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
             
+            if self._mouse_pos and len(self.polygon_points) > 0:
+                last_pt = self.polygon_points[-1]
+                preview_color = QColor(255, 255, 255)
+                painter.setPen(QPen(preview_color, 1))
+                painter.drawLine(int(last_pt[0]), int(last_pt[1]), int(self._mouse_pos[0]), int(self._mouse_pos[1]))
+            
             for pt in self.polygon_points:
-                painter.drawEllipse(int(pt[0]) - 3, int(pt[1]) - 3, 6, 6)
+                painter.setPen(QPen(qt_color, 2))
+                painter.setBrush(qt_color)
+                painter.drawEllipse(int(pt[0]) - 5, int(pt[1]) - 5, 10, 10)
         
         painter.end()
         return overlay
@@ -372,6 +381,15 @@ class MarkImageViewer(QLabel):
         
         pos = event.position().toPoint()
         
+        if self.mode == 'draw' and self.current_category and self.polygon_points:
+            img_x = int((pos.x() - self.offset_x) / self._zoom_factor)
+            img_y = int((pos.y() - self.offset_y) / self._zoom_factor)
+            img_x = max(0, min(img_x, self.current_pixmap.width()))
+            img_y = max(0, min(img_y, self.current_pixmap.height()))
+            self._mouse_pos = (img_x, img_y)
+            self._update_display()
+            return
+        
         if self.is_panning and self.pan_start:
             dx = pos.x() - self.pan_start.x()
             dy = pos.y() - self.pan_start.y()
@@ -405,4 +423,5 @@ class MarkImageViewer(QLabel):
     def clear_regions(self):
         self.regions = {'水面': [], '摊面': [], '分界线': [], '坝体': []}
         self.polygon_points = []
+        self._mouse_pos = None
         self._update_display()
