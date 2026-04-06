@@ -330,12 +330,32 @@ class VideoExtractThread(QThread):
         self.output_dir = output_dir
         self.video_info = video_info
         self._stop = False
+        self._progress_thread = None
     
     def run(self):
         import subprocess
         import tempfile
         import shutil
         import re
+        import threading
+        
+        def read_stderr(proc, lines_list):
+            import io
+            buf = io.BytesIO()
+            while True:
+                data = proc.stderr.read(1024)
+                if not data:
+                    break
+                buf.write(data)
+                while b'\r' in buf.getvalue():
+                    line = buf.getvalue().split(b'\r')[-1]
+                    try:
+                        decoded = line.decode('utf-8', errors='ignore')
+                        lines_list.append(decoded)
+                    except:
+                        pass
+                    buf = io.BytesIO()
+                    buf.write(line)
         
         try:
             video_path = Path(self.video_path)
@@ -380,31 +400,31 @@ class VideoExtractThread(QThread):
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    universal_newlines=True
+                    stderr=subprocess.PIPE
                 )
                 
-                stderr_output = []
-                while True:
-                    line = process.stderr.readline()
-                    if not line and process.poll() is not None:
-                        break
-                    if line:
-                        stderr_output.append(line)
+                stderr_lines = []
+                self._progress_thread = threading.Thread(target=read_stderr, args=(process, stderr_lines))
+                self._progress_thread.start()
+                
+                while process.poll() is None:
+                    for line in stderr_lines[-10:]:
                         if 'frame=' in line:
                             match = re.search(r'frame=\s*(\d+)', line)
                             if match:
                                 frame_count = int(match.group(1))
                                 if self.mode == 'count' and self.value > 0:
-                                    pct = min(98, int(frame_count / self.value * 100))
+                                    pct = min(95, int(frame_count / self.value * 100))
                                 else:
-                                    pct = min(98, int(frame_count / (total_frames / frame_interval + 1) * 100))
+                                    pct = min(95, int(frame_count / (total_frames / frame_interval + 1) * 100))
                                 self.progress_updated.emit(pct)
+                    QThread.msleep(100)
                 
-                process.wait()
+                self._progress_thread.join()
                 
                 if process.returncode != 0:
-                    error_msg = f"FFmpeg错误: {''.join(stderr_output)[-500:]}"
+                    stderr_text = ''.join(stderr_lines)
+                    error_msg = f"FFmpeg错误: {stderr_text[-500:]}"
                     self.error_occurred.emit(error_msg)
                     return
                 
