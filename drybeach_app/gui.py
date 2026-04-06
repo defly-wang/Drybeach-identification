@@ -11,7 +11,7 @@ try:
                                  QSpinBox, QDoubleSpinBox, QGroupBox, QTextEdit,
                                  QProgressBar, QCheckBox, QComboBox, QMessageBox,
                                  QSizePolicy, QScrollArea, QRadioButton, QListWidget,
-                                 QListWidgetItem, QAbstractItemView)
+                                 QListWidgetItem, QAbstractItemView, QTabWidget)
     from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
     from PyQt6.QtGui import QImage, QPixmap, QAction, QIcon
     PYQT_AVAILABLE = True
@@ -144,32 +144,96 @@ class VideoExtractThread(QThread):
     finished = pyqtSignal(list)
     error_occurred = pyqtSignal(str)
     
-    def __init__(self, video_path: str, mode: str, value: int, output_dir: Path):
+    def __init__(self, video_path: str, mode: str, value: int, output_dir: Path, video_info: dict):
         super().__init__()
         self.video_path = video_path
         self.mode = mode
         self.value = value
         self.output_dir = output_dir
+        self.video_info = video_info
     
     def run(self):
+        import subprocess
+        import tempfile
+        import shutil
+        
         try:
-            from .video_capture import VideoFrameExtractor
+            video_path = Path(self.video_path)
+            output_dir = self.output_dir
+            output_dir.mkdir(parents=True, exist_ok=True)
             
-            saved_paths = []
-            with VideoFrameExtractor(self.video_path) as extractor:
+            temp_dir = Path(tempfile.mkdtemp(prefix='drybeach_'))
+            
+            try:
+                saved_paths = []
+                fps = self.video_info.get('fps', 25)
+                total_frames = self.video_info.get('total_frames', 0)
+                
                 if self.mode == 'count':
-                    frames = extractor.extract_frames_by_count(self.value)
+                    frame_interval = total_frames // self.value if total_frames > 0 else 1
+                    frame_interval = max(1, frame_interval)
+                    select_filter = rf"not(mod(n\,{frame_interval}))"
+                    cmd = [
+                        'ffmpeg',
+                        '-i', str(video_path),
+                        '-vf', rf"select='{select_filter}'",
+                        '-vsync', '0',
+                        '-q:v', '2',
+                        '-frames:v', str(self.value),
+                        '-y',
+                        str(temp_dir / "frame_%06d.jpg")
+                    ]
                 else:
-                    frames = extractor.extract_frames_at_interval(self.value)
+                    seconds_interval = self.value
+                    frame_interval = int(seconds_interval * fps)
+                    frame_interval = max(1, frame_interval)
+                    select_filter = rf"not(mod(n\,{frame_interval}))"
+                    cmd = [
+                        'ffmpeg',
+                        '-i', str(video_path),
+                        '-vf', rf"select='{select_filter}',scale=iw/2:ih/2",
+                        '-vsync', '0',
+                        '-q:v', '2',
+                        '-y',
+                        str(temp_dir / "frame_%06d.jpg")
+                    ]
                 
-                total = len(frames)
-                for i, (frame_num, frame) in enumerate(frames):
-                    self.frame_extracted.emit(frame_num, frame)
-                    self.progress_updated.emit(int((i + 1) / total * 100))
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    universal_newlines=True
+                )
                 
-                saved_paths = extractor.save_frames(frames, self.output_dir)
+                stdout, stderr = process.communicate()
+                
+                if process.returncode != 0:
+                    error_msg = f"FFmpeg错误: {stderr[-500:]}"
+                    self.error_occurred.emit(error_msg)
+                    return
+                
+                temp_files = sorted(temp_dir.glob("frame_*.jpg"))
+                
+                if not temp_files:
+                    self.error_occurred.emit("未提取到任何帧，请检查视频文件")
+                    return
+                
+                for i, temp_file in enumerate(temp_files):
+                    dest_file = output_dir / f"{video_path.stem}_{temp_file.name}"
+                    shutil.copy2(temp_file, dest_file)
+                    saved_paths.append(dest_file)
+                    
+                    frame_num = i * frame_interval if self.mode == 'count' else int(i * seconds_interval * fps)
+                    self.frame_extracted.emit(frame_num, str(dest_file))
+                    self.progress_updated.emit(int((i + 1) / len(temp_files) * 100))
+                
+                self.finished.emit(saved_paths)
+                
+            finally:
+                shutil.rmtree(temp_dir, ignore_errors=True)
             
-            self.finished.emit(saved_paths)
+        except FileNotFoundError:
+            self.error_occurred.emit("未找到FFmpeg，请确保已安装并添加到PATH环境变量")
         except Exception as e:
             self.error_occurred.emit(str(e))
 
@@ -284,17 +348,46 @@ class VideoExtractWidget(QWidget):
             self.load_video_info()
     
     def load_video_info(self):
-        from .video_capture import VideoFrameExtractor
+        import subprocess
+        import json
         
         try:
-            with VideoFrameExtractor(self.video_path) as extractor:
-                self.video_info = {
-                    'width': extractor.width,
-                    'height': extractor.height,
-                    'fps': extractor.fps,
-                    'total_frames': extractor.total_frames,
-                    'duration': extractor.duration
-                }
+            cmd = [
+                'ffprobe',
+                '-v', 'error',
+                '-select_streams', 'v:0',
+                '-show_entries', 'stream=width,height,r_frame_rate,nb_frames,duration',
+                '-of', 'json',
+                self.video_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode != 0:
+                raise Exception(result.stderr)
+            
+            data = json.loads(result.stdout)
+            stream = data.get('streams', [{}])[0]
+            
+            fps_str = stream.get('r_frame_rate', '25/1')
+            if '/' in fps_str:
+                fps = eval(fps_str)
+            else:
+                fps = float(fps_str)
+            
+            duration = float(stream.get('duration', 0))
+            nb_frames = stream.get('nb_frames')
+            
+            if nb_frames is None and duration > 0:
+                nb_frames = int(duration * fps)
+            
+            self.video_info = {
+                'width': stream.get('width', 0),
+                'height': stream.get('height', 0),
+                'fps': fps,
+                'total_frames': int(nb_frames) if nb_frames else 0,
+                'duration': duration
+            }
             
             info_text = (f"分辨率: {self.video_info['width']}x{self.video_info['height']} | "
                         f"FPS: {self.video_info['fps']:.2f} | "
@@ -305,8 +398,12 @@ class VideoExtractWidget(QWidget):
             self.list_thumbnails.clear()
             self.extracted_frames = []
             
+        except subprocess.TimeoutExpired:
+            self.lbl_video_info.setText("获取视频信息超时")
+            self.btn_extract.setEnabled(False)
         except Exception as e:
-            self.lbl_video_info.setText(f"加载失败: {str(e)}")
+            error_msg = str(e)
+            self.lbl_video_info.setText(f"加载失败: {error_msg[:50]}")
             self.btn_extract.setEnabled(False)
     
     def select_save_dir(self):
@@ -334,7 +431,7 @@ class VideoExtractWidget(QWidget):
         self.extracted_frames = []
         
         self.extract_thread = VideoExtractThread(
-            self.video_path, mode, value, self.save_dir
+            self.video_path, mode, value, self.save_dir, self.video_info
         )
         self.extract_thread.progress_updated.connect(self.progress_bar.setValue)
         self.extract_thread.frame_extracted.connect(self.add_thumbnail)
@@ -342,17 +439,21 @@ class VideoExtractWidget(QWidget):
         self.extract_thread.error_occurred.connect(self.on_error)
         self.extract_thread.start()
     
-    def add_thumbnail(self, frame_num: int, frame: np.ndarray):
-        self.extracted_frames.append((frame_num, frame))
+    def add_thumbnail(self, frame_num: int, frame_data):
+        self.extracted_frames.append((frame_num, frame_data))
         
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        h, w = rgb_frame.shape[:2]
-        bytes_per_line = 3 * w
-        qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
-        pixmap = QPixmap.fromImage(qt_image)
+        if isinstance(frame_data, str):
+            pixmap = QPixmap(frame_data)
+        else:
+            rgb_frame = cv2.cvtColor(frame_data, cv2.COLOR_BGR2RGB)
+            h, w = rgb_frame.shape[:2]
+            bytes_per_line = 3 * w
+            qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+            pixmap = QPixmap.fromImage(qt_image)
         
-        icon = pixmap.scaled(120, 90, Qt.AspectRatioMode.KeepAspectRatio, 
+        icon_pixmap = pixmap.scaled(120, 90, Qt.AspectRatioMode.KeepAspectRatio, 
                             Qt.TransformationMode.SmoothTransformation)
+        icon = QIcon(icon_pixmap)
         
         item = QListWidgetItem()
         item.setIcon(icon)
@@ -412,9 +513,6 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         
         center_panel = self._create_center_panel()
         main_layout.addWidget(center_panel, 3)
-        
-        right_panel = self._create_right_panel()
-        main_layout.addWidget(right_panel, 1)
     
     def _create_menu_bar(self):
         menubar = self.menuBar()
@@ -453,28 +551,40 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         panel = QWidget()
         layout = QVBoxLayout()
         
+        self.tabs = QTabWidget()
+        
         self.video_extract_widget = VideoExtractWidget()
-        layout.addWidget(self.video_extract_widget)
+        self.tabs.addTab(self.video_extract_widget, "视频提取")
         
-        line_sep = QLabel("<hr>")
-        line_sep.setStyleSheet("color: #888;")
-        layout.addWidget(line_sep)
+        detection_tab = self._create_detection_tab()
+        self.tabs.addTab(detection_tab, "识别")
         
-        lbl_main = QLabel("主控制")
-        lbl_main.setStyleSheet("font-weight: bold;")
-        layout.addWidget(lbl_main)
+        calibration_tab = self._create_calibration_tab()
+        self.tabs.addTab(calibration_tab, "校准")
+        
+        training_tab = self._create_training_tab()
+        self.tabs.addTab(training_tab, "训练")
+        
+        layout.addWidget(self.tabs)
+        
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximum(100)
+        layout.addWidget(self.progress_bar)
+        
+        self.lbl_status = QLabel("就绪")
+        self.lbl_status.setStyleSheet("color: #666; padding: 5px;")
+        layout.addWidget(self.lbl_status)
+        
+        panel.setLayout(layout)
+        return panel
+    
+    def _create_detection_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout()
         
         btn_load_image = QPushButton("打开图片")
         btn_load_image.clicked.connect(self.load_image)
         layout.addWidget(btn_load_image)
-        
-        line1 = QLabel("<hr>")
-        line1.setStyleSheet("color: #888;")
-        layout.addWidget(line1)
-        
-        lbl_recognition = QLabel("识别设置")
-        lbl_recognition.setStyleSheet("font-weight: bold;")
-        layout.addWidget(lbl_recognition)
         
         method_layout = QHBoxLayout()
         method_layout.addWidget(QLabel("识别方法:"))
@@ -492,81 +602,17 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         self.btn_set_roi = btn_set_roi
         layout.addWidget(btn_set_roi)
         
-        line2 = QLabel("<hr>")
-        line2.setStyleSheet("color: #888;")
-        layout.addWidget(line2)
+        sep = QLabel("<hr>")
+        sep.setStyleSheet("color: #888;")
+        layout.addWidget(sep)
         
-        lbl_calibration = QLabel("校准设置")
-        lbl_calibration.setStyleSheet("font-weight: bold;")
-        layout.addWidget(lbl_calibration)
-        
-        cal_layout = QHBoxLayout()
-        cal_layout.addWidget(QLabel("距离(m):"))
-        self.spin_cal_distance = QDoubleSpinBox()
-        self.spin_cal_distance.setRange(0.1, 10000)
-        self.spin_cal_distance.setValue(10)
-        cal_layout.addWidget(self.spin_cal_distance)
-        layout.addLayout(cal_layout)
-        
-        btn_calibrate = QPushButton("开始校准(点击两点)")
-        btn_calibrate.clicked.connect(self.start_calibration)
-        self.btn_calibrate = btn_calibrate
-        layout.addWidget(btn_calibrate)
-        
-        line3 = QLabel("<hr>")
-        line3.setStyleSheet("color: #888;")
-        layout.addWidget(line3)
-        
-        lbl_training = QLabel("模型训练")
-        lbl_training.setStyleSheet("font-weight: bold;")
-        layout.addWidget(lbl_training)
-        
-        btn_train_model = QPushButton("训练模型")
-        btn_train_model.clicked.connect(self.train_model)
-        layout.addWidget(btn_train_model)
-        
-        epochs_layout = QHBoxLayout()
-        epochs_layout.addWidget(QLabel("训练轮数:"))
-        self.spin_epochs = QSpinBox()
-        self.spin_epochs.setRange(1, 1000)
-        self.spin_epochs.setValue(100)
-        epochs_layout.addWidget(self.spin_epochs)
-        layout.addLayout(epochs_layout)
-        
-        layout.addStretch()
-        
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setMaximum(100)
-        layout.addWidget(self.progress_bar)
-        
-        self.lbl_status = QLabel("就绪")
-        self.lbl_status.setStyleSheet("color: #666; padding: 5px;")
-        layout.addWidget(self.lbl_status)
-        
-        panel.setLayout(layout)
-        return panel
-    
-    def _create_center_panel(self) -> QWidget:
-        panel = QWidget()
-        layout = QVBoxLayout()
-        panel.setLayout(layout)
-        
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        
-        self.image_viewer = ImageViewer()
-        scroll_area.setWidget(self.image_viewer)
-        
-        layout.addWidget(scroll_area)
-        
-        return panel
-    
-    def _create_right_panel(self) -> QGroupBox:
-        panel = QGroupBox("识别结果")
-        layout = QVBoxLayout()
+        lbl_results = QLabel("识别结果:")
+        lbl_results.setStyleSheet("font-weight: bold;")
+        layout.addWidget(lbl_results)
         
         self.text_results = QTextEdit()
         self.text_results.setReadOnly(True)
+        self.text_results.setMaximumHeight(150)
         self.text_results.setStyleSheet("""
             QTextEdit {
                 background-color: #1e1e1e;
@@ -589,7 +635,73 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         btn_clear_results.clicked.connect(self.clear_results)
         layout.addWidget(btn_clear_results)
         
+        layout.addStretch()
+        tab.setLayout(layout)
+        return tab
+    
+    def _create_calibration_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout()
+        
+        lbl_info = QLabel("通过两点校准像素与实际距离的转换比例")
+        lbl_info.setWordWrap(True)
+        lbl_info.setStyleSheet("color: #666;")
+        layout.addWidget(lbl_info)
+        
+        cal_layout = QHBoxLayout()
+        cal_layout.addWidget(QLabel("已知距离(m):"))
+        self.spin_cal_distance = QDoubleSpinBox()
+        self.spin_cal_distance.setRange(0.1, 10000)
+        self.spin_cal_distance.setValue(10)
+        cal_layout.addWidget(self.spin_cal_distance)
+        layout.addLayout(cal_layout)
+        
+        btn_calibrate = QPushButton("开始校准(点击两点)")
+        btn_calibrate.clicked.connect(self.start_calibration)
+        self.btn_calibrate = btn_calibrate
+        layout.addWidget(btn_calibrate)
+        
+        self.lbl_calibration_status = QLabel("未校准")
+        self.lbl_calibration_status.setStyleSheet("color: #888; padding: 5px;")
+        layout.addWidget(self.lbl_calibration_status)
+        
+        layout.addStretch()
+        tab.setLayout(layout)
+        return tab
+    
+    def _create_training_tab(self) -> QWidget:
+        tab = QWidget()
+        layout = QVBoxLayout()
+        
+        btn_train_model = QPushButton("选择数据集配置文件")
+        btn_train_model.clicked.connect(self.train_model)
+        layout.addWidget(btn_train_model)
+        
+        epochs_layout = QHBoxLayout()
+        epochs_layout.addWidget(QLabel("训练轮数:"))
+        self.spin_epochs = QSpinBox()
+        self.spin_epochs.setRange(1, 1000)
+        self.spin_epochs.setValue(100)
+        epochs_layout.addWidget(self.spin_epochs)
+        layout.addLayout(epochs_layout)
+        
+        layout.addStretch()
+        tab.setLayout(layout)
+        return tab
+    
+    def _create_center_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout()
         panel.setLayout(layout)
+        
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        
+        self.image_viewer = ImageViewer()
+        scroll_area.setWidget(self.image_viewer)
+        
+        layout.addWidget(scroll_area)
+        
         return panel
     
     def load_image(self):
@@ -620,6 +732,7 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         self.calibration_mode = True
         self.calibration_points = []
         self.btn_calibrate.setText("点击第一个校准点...")
+        self.lbl_calibration_status.setText("等待点击...")
         self.text_results.append("[INFO] 校准模式: 请点击两个已知距离的点")
     
     def run_detection(self):
