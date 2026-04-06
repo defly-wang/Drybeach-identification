@@ -83,15 +83,89 @@ class ProcessingThread(QThread):
     
     def _process_training(self):
         from drybeach_app.model_trainer import ModelTrainer
+        from sklearn.model_selection import train_test_split
+        import shutil
         
-        config_path = self.params['config_path']
+        data_path = self.params['data_path']
         epochs = self.params['epochs']
         model_save = Path(self.params['model_save'])
         
-        trainer = ModelTrainer(model_save_path=model_save)
+        categories = ['water', 'beach', 'boundary', 'dam']
+        class_names = ['water', 'beach', 'boundary', 'dam']
+        
+        temp_dataset = model_save / 'dataset'
+        train_img_dir = temp_dataset / 'images' / 'train'
+        train_lbl_dir = temp_dataset / 'labels' / 'train'
+        val_img_dir = temp_dataset / 'images' / 'val'
+        val_lbl_dir = temp_dataset / 'labels' / 'val'
+        
+        for d in [train_img_dir, train_lbl_dir, val_img_dir, val_lbl_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+        
+        all_images = []
+        for cat_idx, cat in enumerate(categories):
+            cat_dir = data_path / cat
+            if cat_dir.exists():
+                for img_file in cat_dir.glob('*.jpg'):
+                    all_images.append((img_file, cat_idx))
+                for img_file in cat_dir.glob('*.png'):
+                    all_images.append((img_file, cat_idx))
+        
+        if not all_images:
+            raise ValueError("未找到任何训练图片")
+        
+        train_files, val_files = train_test_split(all_images, test_size=0.2, random_state=42)
+        
+        total = len(all_images)
+        processed = 0
+        
+        for img_path, cat_idx in train_files:
+            self._copy_and_label(img_path, cat_idx, train_img_dir, train_lbl_dir, categories)
+            processed += 1
+            self.progress_updated.emit(int(processed / total * 50))
+        
+        for img_path, cat_idx in val_files:
+            self._copy_and_label(img_path, cat_idx, val_img_dir, val_lbl_dir, categories)
+            processed += 1
+            self.progress_updated.emit(int(processed / total * 50))
+        
+        config_path = temp_dataset / 'data.yaml'
+        config_content = f"""
+path: {temp_dataset}
+train: images/train
+val: images/val
+
+nc: {len(class_names)}
+names: {class_names}
+"""
+        with open(config_path, 'w', encoding='utf-8') as f:
+            f.write(config_content)
+        
+        trainer = ModelTrainer(model_save_path=model_save / 'best.pt')
+        
+        for epoch in range(epochs):
+            self.progress_updated.emit(50 + int((epoch + 1) / epochs * 50))
+        
         model_path = trainer.train_with_yolo(config_path, epochs=epochs)
         
         self.finished.emit([model_path])
+    
+    def _copy_and_label(self, img_path, cat_idx, img_dir, lbl_dir, categories):
+        import cv2
+        import numpy as np
+        
+        img = cv2.imread(str(img_path))
+        if img is None:
+            return
+        
+        h, w = img.shape[:2]
+        
+        new_img_path = img_dir / f"{img_path.stem}.jpg"
+        cv2.imwrite(str(new_img_path), img)
+        
+        lbl_path = lbl_dir / f"{img_path.stem}.txt"
+        with open(lbl_path, 'w') as f:
+            f.write(f"{cat_idx} 0.5 0.5 1.0 1.0\n")
 
 
 class VideoExtractThread(QThread):
