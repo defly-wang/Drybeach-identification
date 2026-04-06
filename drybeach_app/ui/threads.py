@@ -49,33 +49,26 @@ class ProcessingThread(QThread):
     
     def _process_detection(self):
         from drybeach_app.recognizer import DryBeachRecognizer
-        from drybeach_app.image_annotator import RegionOfInterest
         
         image_paths = self.params['image_paths']
-        output_dir = Path(self.params['output_dir'])
-        calibration = self.params.get('calibration')
-        roi_data = self.params.get('roi')
-        method = self.params.get('method', 'multi')
+        model_path = self.params.get('model_path')
+        patch_size = self.params.get('patch_size', 64)
+        stride = self.params.get('stride', 32)
         
-        recognizer = DryBeachRecognizer()
-        
-        if calibration:
-            recognizer.calibrate(calibration['distance'], calibration['points'])
-        
-        roi = None
-        if roi_data:
-            x, y, w, h = roi_data
-            roi = RegionOfInterest(x, y, w, h)
+        recognizer = DryBeachRecognizer(model_path=model_path)
+        recognizer.patch_size = patch_size
+        recognizer.stride = stride
         
         results = []
         for i, img_path in enumerate(image_paths):
             image = cv2.imread(str(img_path))
             if image is not None:
-                result, annotated = recognizer.detect_and_visualize(image, roi=roi, method=method)
-                
-                output_path = output_dir / f"result_{img_path.stem}.jpg"
-                cv2.imwrite(str(output_path), annotated)
-                results.append(output_path)
+                result, annotated = recognizer.detect_and_visualize(image)
+                results.append({
+                    'annotated': annotated,
+                    'class_counts': result.class_counts,
+                    'image_path': img_path
+                })
                 
                 self.progress_updated.emit(int((i + 1) / len(image_paths) * 100))
         

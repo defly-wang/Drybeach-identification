@@ -29,6 +29,8 @@ class DryBeachGUI(QMainWindow):
         self.calibration_done = False
         self.calibration_points = []
         self.training_data_path = None
+        self.recognizer = None
+        self.annotated_image = None
         
         self.processing_thread = None
         
@@ -121,37 +123,52 @@ class DryBeachGUI(QMainWindow):
         tab = QWidget()
         layout = QVBoxLayout()
         
+        btn_load_model = QPushButton("加载模型")
+        btn_load_model.clicked.connect(self.load_model)
+        layout.addWidget(btn_load_model)
+        
+        self.lbl_model_path = QLabel("未加载模型")
+        self.lbl_model_path.setStyleSheet("color: #666;")
+        layout.addWidget(self.lbl_model_path)
+        
         btn_load_image = QPushButton("打开图片")
         btn_load_image.clicked.connect(self.load_image)
         layout.addWidget(btn_load_image)
         
-        method_layout = QHBoxLayout()
-        method_layout.addWidget(QLabel("识别方法:"))
-        self.combo_method = QComboBox()
-        self.combo_method.addItems(['multi', 'edge', 'color'])
-        method_layout.addWidget(self.combo_method)
-        layout.addLayout(method_layout)
+        self.lbl_image_path = QLabel("未加载图片")
+        self.lbl_image_path.setStyleSheet("color: #666;")
+        layout.addWidget(self.lbl_image_path)
+        
+        param_layout = QHBoxLayout()
+        param_layout.addWidget(QLabel("切片尺寸:"))
+        self.cmb_detect_patch = QComboBox()
+        self.cmb_detect_patch.addItems(["24", "32", "64", "96", "128"])
+        self.cmb_detect_patch.setCurrentText("64")
+        param_layout.addWidget(self.cmb_detect_patch)
+        
+        param_layout.addWidget(QLabel("步长:"))
+        self.spin_detect_stride = QSpinBox()
+        self.spin_detect_stride.setRange(2, 64)
+        self.spin_detect_stride.setValue(32)
+        param_layout.addWidget(self.spin_detect_stride)
+        layout.addLayout(param_layout)
         
         btn_run_detection = QPushButton("运行识别")
         btn_run_detection.clicked.connect(self.run_detection)
+        self.btn_run_detection = btn_run_detection
         layout.addWidget(btn_run_detection)
         
-        btn_set_roi = QPushButton("设置ROI区域")
-        btn_set_roi.clicked.connect(self.toggle_roi_mode)
-        self.btn_set_roi = btn_set_roi
-        layout.addWidget(btn_set_roi)
-        
-        sep = QLabel("<hr>")
-        sep.setStyleSheet("color: #888;")
-        layout.addWidget(sep)
+        self.detect_progress = QProgressBar()
+        self.detect_progress.setVisible(False)
+        layout.addWidget(self.detect_progress)
         
         btn_save_result = QPushButton("保存结果图片")
         btn_save_result.clicked.connect(self.save_result)
         layout.addWidget(btn_save_result)
         
-        btn_export_report = QPushButton("导出报告")
-        btn_export_report.clicked.connect(self.export_report)
-        layout.addWidget(btn_export_report)
+        self.lbl_detect_result = QLabel("")
+        self.lbl_detect_result.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self.lbl_detect_result)
         
         layout.addStretch()
         tab.setLayout(layout)
@@ -285,7 +302,23 @@ class DryBeachGUI(QMainWindow):
             if self.current_image is not None:
                 self.image_viewer.set_image(self.current_image)
                 h, w = self.current_image.shape[:2]
+                self.lbl_image_path.setText(f"已选择: {self.current_image_path.name} ({w}x{h})")
                 self.statusBar().showMessage(f"已加载: {self.current_image_path.name} ({w}x{h})")
+    
+    def load_model(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择模型", "", "Model Files (*.pt)"
+        )
+        
+        if file_path:
+            try:
+                from drybeach_app.recognizer import DryBeachRecognizer
+                self.recognizer = DryBeachRecognizer(model_path=file_path)
+                self.model_path = Path(file_path)
+                self.lbl_model_path.setText(f"已加载: {self.model_path.name}")
+                self.statusBar().showMessage(f"已加载模型: {self.model_path.name}")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"加载模型失败:\n{str(e)}")
     
     def load_image_from_path(self, file_path: str):
         self.current_image_path = Path(file_path)
@@ -343,6 +376,10 @@ class DryBeachGUI(QMainWindow):
             self.image_viewer.set_mode('normal')
     
     def run_detection(self):
+        if self.recognizer is None:
+            QMessageBox.warning(self, "警告", "请先加载模型")
+            return
+        
         image_paths = []
         
         if self.current_image_path and self.current_image is not None:
@@ -357,32 +394,23 @@ class DryBeachGUI(QMainWindow):
             QMessageBox.warning(self, "警告", "请先打开图片或选择图片目录")
             return
         
-        output_dir = QFileDialog.getExistingDirectory(self, "选择输出目录")
+        patch_size = int(self.cmb_detect_patch.currentText())
+        stride = self.spin_detect_stride.value()
         
-        if not output_dir:
-            return
-        
+        self.detect_progress.setVisible(True)
+        self.detect_progress.setValue(0)
+        self.btn_run_detection.setEnabled(False)
         self.statusBar().showMessage("正在识别...")
-        
-        calibration_data = None
-        if self.calibration_done and len(self.calibration_points) == 2:
-            calibration_data = {
-                'distance': self.spin_cal_distance.value(),
-                'points': self.calibration_points
-            }
-        
-        roi_data = self.roi
-        method = self.combo_method.currentText()
         
         self.processing_thread = ProcessingThread('detection', {
             'image_paths': image_paths,
-            'output_dir': output_dir,
-            'calibration': calibration_data,
-            'roi': roi_data,
-            'method': method
+            'model_path': str(self.model_path) if hasattr(self, 'model_path') else None,
+            'patch_size': patch_size,
+            'stride': stride
         })
         
-        self.processing_thread.finished.connect(lambda x: self.on_detection_complete(x, output_dir))
+        self.processing_thread.progress_updated.connect(self.detect_progress.setValue)
+        self.processing_thread.finished.connect(self.on_detection_complete)
         self.processing_thread.error_occurred.connect(self.on_error)
         
         self.processing_thread.start()
@@ -459,21 +487,34 @@ class DryBeachGUI(QMainWindow):
     def on_processing_complete(self, results: list, message: str):
         self.statusBar().showMessage(f"{message} - {len(results)} 个文件")
     
-    def on_detection_complete(self, results: list, output_dir: str):
+    def on_detection_complete(self, results: list):
+        self.detect_progress.setVisible(False)
+        self.btn_run_detection.setEnabled(True)
+        
         self.statusBar().showMessage(f"识别完成: {len(results)} 张图片")
         
         if results:
-            result_img = cv2.imread(str(results[0]))
-            if result_img is not None:
-                self.image_viewer.set_image(result_img)
+            first_result = results[0]
+            if 'annotated' in first_result:
+                self.annotated_image = first_result['annotated']
+                self.image_viewer.set_image(self.annotated_image)
+                
+                counts = first_result.get('class_counts', {})
+                count_text = " | ".join([f"{k}: {v}" for k, v in counts.items()])
+                self.lbl_detect_result.setText(count_text)
+            else:
+                result_img = cv2.imread(str(first_result))
+                if result_img is not None:
+                    self.annotated_image = result_img
+                    self.image_viewer.set_image(result_img)
     
     def on_error(self, error_msg: str):
         self.statusBar().showMessage("处理出错")
         QMessageBox.critical(self, "错误", error_msg)
     
     def save_result(self):
-        if self.image_viewer.pixmap() is None:
-            QMessageBox.warning(self, "警告", "没有可保存的图片")
+        if not hasattr(self, 'annotated_image') or self.annotated_image is None:
+            QMessageBox.warning(self, "警告", "没有可保存的标注图片")
             return
         
         file_path, _ = QFileDialog.getSaveFileName(
@@ -481,8 +522,7 @@ class DryBeachGUI(QMainWindow):
         )
         
         if file_path:
-            pixmap = self.image_viewer.pixmap()
-            pixmap.save(file_path)
+            cv2.imwrite(file_path, self.annotated_image)
             self.statusBar().showMessage(f"已保存: {Path(file_path).name}")
     
     def export_report(self):
