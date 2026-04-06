@@ -102,14 +102,14 @@ class DryBeachGUI(QMainWindow):
         self.video_extract_widget.status_updated.connect(self.statusBar().showMessage)
         self.tabs.addTab(self.video_extract_widget, "视频提取")
         
+        mark_tab = self._create_mark_segment_tab()
+        self.tabs.addTab(mark_tab, "标记分割")
+        
         detection_tab = self._create_detection_tab()
         self.tabs.addTab(detection_tab, "识别")
         
         calibration_tab = self._create_calibration_tab()
         self.tabs.addTab(calibration_tab, "校准")
-        
-        mark_tab = self._create_mark_segment_tab()
-        self.tabs.addTab(mark_tab, "标记分割")
         
         training_tab = self._create_training_tab()
         self.tabs.addTab(training_tab, "训练")
@@ -218,7 +218,7 @@ class DryBeachGUI(QMainWindow):
     
     def on_mark_image_opened(self, image_path: str):
         self.mark_viewer.set_image(cv2.imread(image_path))
-        self.tabs.setCurrentIndex(3)
+        self.tabs.setCurrentIndex(1)
     
     def _create_training_tab(self) -> QWidget:
         tab = QWidget()
@@ -283,7 +283,7 @@ class DryBeachGUI(QMainWindow):
         return panel
     
     def on_tab_changed(self, index):
-        if index == 3:
+        if index == 1:
             self.scroll_area.hide()
             self.mark_viewer.show()
         else:
