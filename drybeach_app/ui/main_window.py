@@ -122,6 +122,8 @@ class DryBeachGUI(QMainWindow):
         self.calibration_tab = self._create_calibration_tab()
         self.tabs.addTab(self.calibration_tab, "校准")
         
+        self.tabs.currentChanged.connect(self.on_tab_changed)
+        
         layout.addWidget(self.tabs)
         
         panel.setLayout(layout)
@@ -195,8 +197,6 @@ class DryBeachGUI(QMainWindow):
         layout.addWidget(self.water_line_viewer)
         
         self.scroll_area = scroll_area
-        
-        self.tabs.currentChanged.connect(self.on_tab_changed)
         
         return panel
     
