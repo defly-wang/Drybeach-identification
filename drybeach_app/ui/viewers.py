@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from typing import Optional, Tuple
 
-from PyQt6.QtWidgets import QLabel, QSizePolicy, QWidget, QScrollArea
+from PyQt6.QtWidgets import QLabel, QSizePolicy, QWidget, QScrollArea, QVBoxLayout
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
 
@@ -378,7 +378,12 @@ class MarkImageViewer(QWidget):
         pos = event.position().toPoint()
         
         if event.button() == Qt.MouseButton.RightButton:
-            self.scroll_area.wheelEvent(event)
+            if self.mode == 'draw' and self.current_category and self.polygon_points:
+                self.polygon_points.pop()
+                self._mouse_pos = None
+                self._update_display()
+            else:
+                self.scroll_area.wheelEvent(event)
             return
         
         if self.mode == 'draw' and self.current_category:
