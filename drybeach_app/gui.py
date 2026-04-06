@@ -497,10 +497,6 @@ class VideoExtractWidget(QWidget):
         self._thumbnail_paths = []
         layout.addWidget(self.list_thumbnails)
         
-        self.lbl_status = QLabel("")
-        self.lbl_status.setStyleSheet("color: #888;")
-        layout.addWidget(self.lbl_status)
-        
         layout.addStretch()
         self.setLayout(layout)
     
@@ -640,7 +636,7 @@ class VideoExtractWidget(QWidget):
         item.setToolTip(f"帧号: {frame_num}")
         self.list_thumbnails.addItem(item)
         
-        self.lbl_status.setText(f"已提取 {len(self.extracted_frames)} 帧")
+        self.statusBar().showMessage(f"已提取 {len(self.extracted_frames)} 帧")
     
     def on_thumbnail_clicked(self, item):
         row = self.list_thumbnails.row(item)
@@ -651,12 +647,12 @@ class VideoExtractWidget(QWidget):
     
     def on_extraction_complete(self, saved_paths: List[Path]):
         self.btn_extract.setEnabled(True)
-        self.lbl_status.setText(f"提取完成! 已保存 {len(saved_paths)} 帧到 {self.save_dir}")
+        self.statusBar().showMessage(f"提取完成! 已保存 {len(saved_paths)} 帧到 {self.save_dir}")
         QMessageBox.information(self, "完成", f"已提取 {len(saved_paths)} 帧\n保存至: {self.save_dir}")
     
     def on_error(self, error_msg: str):
         self.btn_extract.setEnabled(True)
-        self.lbl_status.setText(f"错误: {error_msg}")
+        self.statusBar().showMessage(f"错误: {error_msg}")
         QMessageBox.critical(self, "错误", error_msg)
 
 
@@ -698,6 +694,8 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         
         center_panel = self._create_center_panel()
         main_layout.addWidget(center_panel, 3)
+        
+        self.statusBar().showMessage("就绪")
     
     def _create_menu_bar(self):
         menubar = self.menuBar()
@@ -756,10 +754,6 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         self.progress_bar = QProgressBar()
         self.progress_bar.setMaximum(100)
         layout.addWidget(self.progress_bar)
-        
-        self.lbl_status = QLabel("就绪")
-        self.lbl_status.setStyleSheet("color: #666; padding: 5px;")
-        layout.addWidget(self.lbl_status)
         
         panel.setLayout(layout)
         return panel
@@ -883,7 +877,7 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
             if self.current_image is not None:
                 self.image_viewer.set_image(self.current_image)
                 h, w = self.current_image.shape[:2]
-                self.lbl_status.setText(f"已加载: {self.current_image_path.name} ({w}x{h})")
+                self.statusBar().showMessage(f"已加载: {self.current_image_path.name} ({w}x{h})")
     
     def load_image_from_path(self, file_path: str):
         self.current_image_path = Path(file_path)
@@ -892,19 +886,19 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         if self.current_image is not None:
             self.image_viewer.set_image(self.current_image)
             h, w = self.current_image.shape[:2]
-            self.lbl_status.setText(f"已加载: {self.current_image_path.name} ({w}x{h})")
+            self.statusBar().showMessage(f"已加载: {self.current_image_path.name} ({w}x{h})")
     
     def toggle_roi_mode(self):
         self.roi_mode = not self.roi_mode
         if self.roi_mode:
             self.image_viewer.set_mode('roi')
             self.btn_set_roi.setText("取消ROI")
-            self.lbl_status.setText("ROI模式: 点击拖动选择区域")
+            self.statusBar().showMessage("ROI模式: 点击拖动选择区域")
         else:
             self.image_viewer.set_mode('normal')
             self.btn_set_roi.setText("设置ROI区域")
             self.roi = None
-            self.lbl_status.setText("就绪")
+            self.statusBar().showMessage("就绪")
     
     def start_calibration(self):
         if self.current_image is None:
@@ -914,12 +908,12 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         self.calibration_points = []
         self.btn_calibrate.setText("点击第一个校准点...")
         self.lbl_calibration_status.setText("点击第1点")
-        self.lbl_status.setText("校准模式: 请在图像上点击两个校准点")
+        self.statusBar().showMessage("校准模式: 请在图像上点击两个校准点")
     
     def on_roi_selected(self, roi_tuple: Tuple[int, int, int, int]):
         self.roi = roi_tuple
         x, y, w, h = roi_tuple
-        self.lbl_status.setText(f"ROI已设置: ({x},{y}) {w}x{h}")
+        self.statusBar().showMessage(f"ROI已设置: ({x},{y}) {w}x{h}")
         self.roi_mode = False
         self.btn_set_roi.setText("设置ROI区域")
         self.image_viewer.set_mode('normal')
@@ -935,7 +929,7 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
             dist_px = int(np.sqrt((p2[0]-p1[0])**2 + (p2[1]-p1[1])**2))
             self.lbl_calibration_status.setText(f"已选第2点: {point}, 像素距离: {dist_px}px")
             self.btn_calibrate.setText("校准完成!")
-            self.lbl_status.setText(f"校准点: {p1} -> {p2}, 距离: {dist_px}px")
+            self.statusBar().showMessage(f"校准点: {p1} -> {p2}, 距离: {dist_px}px")
             self.calibration_done = True
             self.calibration_mode = False
             self.image_viewer.set_mode('normal')
@@ -961,7 +955,7 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
             return
         
         self.progress_bar.setValue(0)
-        self.lbl_status.setText("正在识别...")
+        self.statusBar().showMessage("正在识别...")
         
         calibration_data = None
         if self.calibration_done and len(self.calibration_points) == 2:
@@ -1001,7 +995,7 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
             return
         
         self.progress_bar.setValue(0)
-        self.lbl_status.setText("正在训练模型...")
+        self.statusBar().showMessage("正在训练模型...")
         
         self.processing_thread = ProcessingThread('training', {
             'config_path': config_path,
@@ -1017,11 +1011,11 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
     
     def on_processing_complete(self, results: list, message: str):
         self.progress_bar.setValue(100)
-        self.lbl_status.setText(f"{message} - {len(results)} 个文件")
+        self.statusBar().showMessage(f"{message} - {len(results)} 个文件")
     
     def on_detection_complete(self, results: list, output_dir: str):
         self.progress_bar.setValue(100)
-        self.lbl_status.setText(f"识别完成: {len(results)} 张图片")
+        self.statusBar().showMessage(f"识别完成: {len(results)} 张图片")
         
         if results:
             result_img = cv2.imread(str(results[0]))
@@ -1029,7 +1023,7 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
                 self.image_viewer.set_image(result_img)
     
     def on_error(self, error_msg: str):
-        self.lbl_status.setText("处理出错")
+        self.statusBar().showMessage("处理出错")
         QMessageBox.critical(self, "错误", error_msg)
     
     def save_result(self):
@@ -1044,7 +1038,7 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         if file_path:
             pixmap = self.image_viewer.pixmap()
             pixmap.save(file_path)
-            self.lbl_status.setText(f"已保存: {Path(file_path).name}")
+            self.statusBar().showMessage(f"已保存: {Path(file_path).name}")
     
     def export_report(self):
         file_path, _ = QFileDialog.getSaveFileName(
@@ -1053,12 +1047,12 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         
         if file_path:
             with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(self.lbl_status.text())
-            self.lbl_status.setText(f"已导出: {Path(file_path).name}")
+                f.write(self.statusBar().currentMessage())
+            self.statusBar().showMessage(f"已导出: {Path(file_path).name}")
     
     def clear_results(self):
         self.image_viewer.clear_viewer()
-        self.lbl_status.setText("就绪")
+        self.statusBar().showMessage("就绪")
 
 
 def launch_gui():
