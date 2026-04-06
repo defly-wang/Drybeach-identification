@@ -13,7 +13,7 @@ try:
                                  QSizePolicy, QScrollArea, QRadioButton, QListWidget,
                                  QListWidgetItem, QAbstractItemView, QTabWidget)
     from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
-    from PyQt6.QtGui import QImage, QPixmap, QAction, QIcon
+    from PyQt6.QtGui import QImage, QPixmap, QAction, QIcon, QPainter, QPen, QColor
     PYQT_AVAILABLE = True
 except ImportError:
     PYQT_AVAILABLE = False
@@ -24,14 +24,38 @@ logger = logging.getLogger(__name__)
 
 
 class ImageViewer(QLabel):
+    roi_selected = pyqtSignal(tuple)
+    calibration_point_clicked = pyqtSignal(tuple)
+    
     def __init__(self):
         super().__init__()
         self.current_image = None
+        self.current_pixmap = None
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(640, 480)
         self.setStyleSheet("border: 2px solid #ccc; background-color: #2a2a2a;")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setMouseTracking(True)
         
+        self.mode = 'normal'
+        self.drag_start = None
+        self.drag_end = None
+        self.calibration_points = []
+        self.roi_rect = None
+        
+        self.scale_factor = 1.0
+        self.offset_x = 0
+        self.offset_y = 0
+        self.displayed_size = QSize()
+    
+    def set_mode(self, mode: str):
+        self.mode = mode
+        self.calibration_points = []
+        self.roi_rect = None
+        self.drag_start = None
+        self.drag_end = None
+        self.update_overlay()
+    
     def set_image(self, image: np.ndarray):
         if image is None:
             return
@@ -46,12 +70,159 @@ class ImageViewer(QLabel):
         qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
         
         pixmap = QPixmap.fromImage(qt_image)
+        self.current_pixmap = pixmap
         
         scaled_pixmap = pixmap.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio, 
                                       Qt.TransformationMode.SmoothTransformation)
-        self.setPixmap(scaled_pixmap)
+        self.displayed_size = scaled_pixmap.size()
         
+        self.offset_x = (self.size().width() - self.displayed_size.width()) // 2
+        self.offset_y = (self.size().height() - self.displayed_size.height()) // 2
+        
+        self.scale_factor = w / self.displayed_size.width() if self.displayed_size.width() > 0 else 1.0
+        
+        overlay = self._create_overlay()
+        if overlay:
+            painter = QPainter(scaled_pixmap)
+            painter.drawPixmap(0, 0, overlay)
+            painter.end()
+        
+        self.setPixmap(scaled_pixmap)
+        self.current_image = image
+    
+    def _create_overlay(self) -> Optional[QPixmap]:
+        if self.displayed_size.isEmpty():
+            return None
+        
+        overlay = QPixmap(self.displayed_size)
+        overlay.fill(Qt.GlobalColor.transparent)
+        
+        painter = QPainter(overlay)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        
+        if self.mode == 'roi' and self.drag_start and self.drag_end:
+            x1 = min(self.drag_start.x(), self.drag_end.x())
+            y1 = min(self.drag_start.y(), self.drag_end.y())
+            x2 = max(self.drag_start.x(), self.drag_end.x())
+            y2 = max(self.drag_start.y(), self.drag_end.y())
+            
+            painter.setPen(QPen(Qt.GlobalColor.cyan, 2))
+            painter.drawRect(x1, y1, x2 - x1, y2 - y1)
+            
+            text = f"ROI: ({int(x1*self.scale_factor)},{int(y1*self.scale_factor)})-({int(x2*self.scale_factor)},{int(y2*self.scale_factor)})"
+            painter.setPen(QPen(Qt.GlobalColor.white, 1))
+            painter.drawText(x1 + 5, y1 + 15, text)
+        
+        elif self.mode == 'calibration' and self.calibration_points:
+            for i, pt in enumerate(self.calibration_points):
+                painter.setPen(QPen(Qt.GlobalColor.yellow, 3))
+                painter.drawEllipse(int(pt.x()) - 5, int(pt.y()) - 5, 10, 10)
+                painter.setPen(QPen(Qt.GlobalColor.white, 1))
+                painter.drawText(int(pt.x()) + 8, int(pt.y()) + 8, f"P{i+1}")
+            
+            if len(self.calibration_points) == 2:
+                p1 = self.calibration_points[0]
+                p2 = self.calibration_points[1]
+                painter.setPen(QPen(Qt.GlobalColor.yellow, 2))
+                painter.drawLine(int(p1.x()), int(p1.y()), int(p2.x()), int(p2.y()))
+                
+                dx = p2.x() - p1.x()
+                dy = p2.y() - p1.y()
+                dist = int(np.sqrt(dx*dx + dy*dy) * self.scale_factor)
+                mid_x = int((p1.x() + p2.x()) / 2)
+                mid_y = int((p1.y() + p2.y()) / 2)
+                painter.setPen(QPen(Qt.GlobalColor.white, 1))
+                painter.drawText(mid_x + 5, mid_y - 5, f"{dist}px")
+        
+        painter.end()
+        return overlay
+    
+    def update_overlay(self):
+        if self.current_pixmap is None:
+            return
+        
+        scaled_pixmap = self.current_pixmap.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio, 
+                                                  Qt.TransformationMode.SmoothTransformation)
+        self.displayed_size = scaled_pixmap.size()
+        self.offset_x = (self.size().width() - self.displayed_size.width()) // 2
+        self.offset_y = (self.size().height() - self.displayed_size.height()) // 2
+        self.scale_factor = self.current_pixmap.width() / self.displayed_size.width() if self.displayed_size.width() > 0 else 1.0
+        
+        overlay = self._create_overlay()
+        if overlay:
+            painter = QPainter(scaled_pixmap)
+            painter.drawPixmap(0, 0, overlay)
+            painter.end()
+        
+        self.setPixmap(scaled_pixmap)
+    
+    def _widget_to_image(self, widget_x: int, widget_y: int) -> Tuple[int, int]:
+        img_x = int((widget_x - self.offset_x) * self.scale_factor)
+        img_y = int((widget_y - self.offset_y) * self.scale_factor)
+        
+        img_w = self.current_pixmap.width() if self.current_pixmap else 0
+        img_h = self.current_pixmap.height() if self.current_pixmap else 0
+        
+        img_x = max(0, min(img_x, img_w - 1))
+        img_y = max(0, min(img_y, img_h - 1))
+        
+        return img_x, img_y
+    
+    def mousePressEvent(self, event):
+        if self.current_pixmap is None:
+            return
+        
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self.mode == 'roi':
+                self.drag_start = event.position().toPoint()
+                self.drag_end = self.drag_start
+            elif self.mode == 'calibration':
+                if len(self.calibration_points) < 2:
+                    self.calibration_points.append(event.position().toPoint())
+                    self.update_overlay()
+                    img_x, img_y = self._widget_to_image(
+                        event.position().x(), event.position().y()
+                    )
+                    self.calibration_point_clicked.emit((img_x, img_y))
+    
+    def mouseMoveEvent(self, event):
+        if self.current_pixmap is None or self.mode != 'roi':
+            return
+        
+        if self.drag_start is not None:
+            self.drag_end = event.position().toPoint()
+            self.update_overlay()
+    
+    def mouseReleaseEvent(self, event):
+        if self.current_pixmap is None or self.mode != 'roi':
+            return
+        
+        if event.button() == Qt.MouseButton.LeftButton and self.drag_start is not None:
+            self.drag_end = event.position().toPoint()
+            
+            x1 = min(self.drag_start.x(), self.drag_end.x())
+            y1 = min(self.drag_start.y(), self.drag_end.y())
+            x2 = max(self.drag_start.x(), self.drag_end.x())
+            y2 = max(self.drag_start.y(), self.drag_end.y())
+            
+            if abs(x2 - x1) > 5 and abs(y2 - y1) > 5:
+                ix1, iy1 = self._widget_to_image(x1, y1)
+                ix2, iy2 = self._widget_to_image(x2, y2)
+                
+                self.roi_rect = (min(ix1, ix2), min(iy1, iy2), 
+                                abs(ix2 - ix1), abs(iy2 - iy1))
+                self.roi_selected.emit(self.roi_rect)
+            
+            self.drag_start = None
+            self.drag_end = None
+    
     def clear_viewer(self):
+        self.current_image = None
+        self.current_pixmap = None
+        self.calibration_points = []
+        self.roi_rect = None
+        self.drag_start = None
+        self.drag_end = None
         self.clear()
 
 
@@ -105,17 +276,24 @@ class ProcessingThread(QThread):
         image_paths = self.params['image_paths']
         output_dir = Path(self.params['output_dir'])
         calibration = self.params.get('calibration')
+        roi_data = self.params.get('roi')
+        method = self.params.get('method', 'multi')
         
         recognizer = DryBeachRecognizer()
         
         if calibration:
             recognizer.calibrate(calibration['distance'], calibration['points'])
         
+        roi = None
+        if roi_data:
+            x, y, w, h = roi_data
+            roi = RegionOfInterest(x, y, w, h)
+        
         results = []
         for i, img_path in enumerate(image_paths):
             image = cv2.imread(str(img_path))
             if image is not None:
-                result, annotated = recognizer.detect_and_visualize(image)
+                result, annotated = recognizer.detect_and_visualize(image, roi=roi, method=method)
                 
                 output_path = output_dir / f"result_{img_path.stem}.jpg"
                 cv2.imwrite(str(output_path), annotated)
@@ -606,23 +784,6 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         sep.setStyleSheet("color: #888;")
         layout.addWidget(sep)
         
-        lbl_results = QLabel("识别结果:")
-        lbl_results.setStyleSheet("font-weight: bold;")
-        layout.addWidget(lbl_results)
-        
-        self.text_results = QTextEdit()
-        self.text_results.setReadOnly(True)
-        self.text_results.setMaximumHeight(150)
-        self.text_results.setStyleSheet("""
-            QTextEdit {
-                background-color: #1e1e1e;
-                color: #d4d4d4;
-                font-family: 'Consolas', 'Courier New', monospace;
-                font-size: 11px;
-            }
-        """)
-        layout.addWidget(self.text_results)
-        
         btn_save_result = QPushButton("保存结果图片")
         btn_save_result.clicked.connect(self.save_result)
         layout.addWidget(btn_save_result)
@@ -630,10 +791,6 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         btn_export_report = QPushButton("导出报告")
         btn_export_report.clicked.connect(self.export_report)
         layout.addWidget(btn_export_report)
-        
-        btn_clear_results = QPushButton("清除结果")
-        btn_clear_results.clicked.connect(self.clear_results)
-        layout.addWidget(btn_clear_results)
         
         layout.addStretch()
         tab.setLayout(layout)
@@ -698,6 +855,8 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         scroll_area.setWidgetResizable(True)
         
         self.image_viewer = ImageViewer()
+        self.image_viewer.roi_selected.connect(self.on_roi_selected)
+        self.image_viewer.calibration_point_clicked.connect(self.on_calibration_point)
         scroll_area.setWidget(self.image_viewer)
         
         layout.addWidget(scroll_area)
@@ -715,25 +874,54 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
             
             if self.current_image is not None:
                 self.image_viewer.set_image(self.current_image)
-                self.lbl_status.setText(f"已加载图片: {self.current_image_path.name}")
                 h, w = self.current_image.shape[:2]
-                self.text_results.append(f"[INFO] 已加载图片: {file_path} ({w}x{h})")
+                self.lbl_status.setText(f"已加载: {self.current_image_path.name} ({w}x{h})")
     
     def toggle_roi_mode(self):
         self.roi_mode = not self.roi_mode
         if self.roi_mode:
+            self.image_viewer.set_mode('roi')
             self.btn_set_roi.setText("取消ROI")
-            self.text_results.append("[INFO] ROI模式: 点击拖动选择区域")
+            self.lbl_status.setText("ROI模式: 点击拖动选择区域")
         else:
+            self.image_viewer.set_mode('normal')
             self.btn_set_roi.setText("设置ROI区域")
             self.roi = None
+            self.lbl_status.setText("就绪")
     
     def start_calibration(self):
-        self.calibration_mode = True
+        if self.current_image is None:
+            QMessageBox.warning(self, "警告", "请先加载图片")
+            return
+        self.image_viewer.set_mode('calibration')
         self.calibration_points = []
         self.btn_calibrate.setText("点击第一个校准点...")
-        self.lbl_calibration_status.setText("等待点击...")
-        self.text_results.append("[INFO] 校准模式: 请点击两个已知距离的点")
+        self.lbl_calibration_status.setText("点击第1点")
+        self.lbl_status.setText("校准模式: 请在图像上点击两个校准点")
+    
+    def on_roi_selected(self, roi_tuple: Tuple[int, int, int, int]):
+        self.roi = roi_tuple
+        x, y, w, h = roi_tuple
+        self.lbl_status.setText(f"ROI已设置: ({x},{y}) {w}x{h}")
+        self.roi_mode = False
+        self.btn_set_roi.setText("设置ROI区域")
+        self.image_viewer.set_mode('normal')
+    
+    def on_calibration_point(self, point: Tuple[int, int]):
+        self.calibration_points.append(point)
+        n = len(self.calibration_points)
+        if n == 1:
+            self.btn_calibrate.setText("点击第二个校准点...")
+            self.lbl_calibration_status.setText(f"已选第1点: {point}")
+        elif n == 2:
+            p1, p2 = self.calibration_points
+            dist_px = int(np.sqrt((p2[0]-p1[0])**2 + (p2[1]-p1[1])**2))
+            self.lbl_calibration_status.setText(f"已选第2点: {point}, 像素距离: {dist_px}px")
+            self.btn_calibrate.setText("校准完成!")
+            self.lbl_status.setText(f"校准点: {p1} -> {p2}, 距离: {dist_px}px")
+            self.calibration_done = True
+            self.calibration_mode = False
+            self.image_viewer.set_mode('normal')
     
     def run_detection(self):
         image_paths = []
@@ -759,16 +947,21 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         self.lbl_status.setText("正在识别...")
         
         calibration_data = None
-        if self.calibration_done:
+        if self.calibration_done and len(self.calibration_points) == 2:
             calibration_data = {
                 'distance': self.spin_cal_distance.value(),
-                'points': [(0, 100), (100, 100)]
+                'points': self.calibration_points
             }
+        
+        roi_data = self.roi
+        method = self.combo_method.currentText()
         
         self.processing_thread = ProcessingThread('detection', {
             'image_paths': image_paths,
             'output_dir': output_dir,
-            'calibration': calibration_data
+            'calibration': calibration_data,
+            'roi': roi_data,
+            'method': method
         })
         
         self.processing_thread.progress_updated.connect(self.progress_bar.setValue)
@@ -807,16 +1000,11 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
     
     def on_processing_complete(self, results: list, message: str):
         self.progress_bar.setValue(100)
-        self.lbl_status.setText(message)
-        self.text_results.append(f"\n[SUCCESS] {message}")
-        self.text_results.append(f"处理了 {len(results)} 个文件")
+        self.lbl_status.setText(f"{message} - {len(results)} 个文件")
     
     def on_detection_complete(self, results: list, output_dir: str):
         self.progress_bar.setValue(100)
-        self.lbl_status.setText("识别完成")
-        self.text_results.append(f"\n[SUCCESS] 识别完成")
-        self.text_results.append(f"处理了 {len(results)} 张图片")
-        self.text_results.append(f"结果保存在: {output_dir}")
+        self.lbl_status.setText(f"识别完成: {len(results)} 张图片")
         
         if results:
             result_img = cv2.imread(str(results[0]))
@@ -825,7 +1013,6 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
     
     def on_error(self, error_msg: str):
         self.lbl_status.setText("处理出错")
-        self.text_results.append(f"\n[ERROR] {error_msg}")
         QMessageBox.critical(self, "错误", error_msg)
     
     def save_result(self):
@@ -840,7 +1027,7 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         if file_path:
             pixmap = self.image_viewer.pixmap()
             pixmap.save(file_path)
-            self.text_results.append(f"[INFO] 结果已保存: {file_path}")
+            self.lbl_status.setText(f"已保存: {Path(file_path).name}")
     
     def export_report(self):
         file_path, _ = QFileDialog.getSaveFileName(
@@ -849,11 +1036,10 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         
         if file_path:
             with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(self.text_results.toPlainText())
-            self.text_results.append(f"[INFO] 报告已导出: {file_path}")
+                f.write(self.lbl_status.text())
+            self.lbl_status.setText(f"已导出: {Path(file_path).name}")
     
     def clear_results(self):
-        self.text_results.clear()
         self.image_viewer.clear_viewer()
         self.lbl_status.setText("就绪")
 

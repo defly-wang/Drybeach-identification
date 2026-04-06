@@ -1,12 +1,20 @@
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
 import numpy as np
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 import logging
 import cv2
+
+try:
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    from torch.utils.data import Dataset, DataLoader
+    TORCH_AVAILABLE = True
+except (ImportError, OSError) as e:
+    TORCH_AVAILABLE = False
+    torch = None
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Torch not available: {e}. Training features will be disabled.")
 
 try:
     from ultralytics import YOLO
@@ -36,7 +44,10 @@ class DryBeachDataset(Dataset):
     def __len__(self) -> int:
         return len(self.image_files)
     
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int):
+        if not TORCH_AVAILABLE:
+            raise RuntimeError("PyTorch not available")
+        
         img_path = self.image_files[idx]
         
         image = cv2.imread(str(img_path))
@@ -54,7 +65,10 @@ class DryBeachDataset(Dataset):
         
         return image, label
     
-    def _load_label(self, label_path: Path, img_w: int, img_h: int) -> torch.Tensor:
+    def _load_label(self, label_path: Path, img_w: int, img_h: int):
+        if not TORCH_AVAILABLE:
+            raise RuntimeError("PyTorch not available")
+        
         if not label_path.exists():
             return torch.zeros((0, 5))
         
@@ -68,7 +82,6 @@ class DryBeachDataset(Dataset):
         
         if not labels:
             return torch.zeros((0, 5))
-        
         return torch.tensor(labels, dtype=torch.float32)
 
 
@@ -117,8 +130,10 @@ class ModelTrainer:
     def __init__(self, model_save_path: Optional[Path] = None):
         self.model_save_path = model_save_path
         self.model = None
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        logger.info(f"Training on device: {self.device}")
+        self.device = None
+        if TORCH_AVAILABLE:
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            logger.info(f"Training on device: {self.device}")
     
     def train_with_yolo(self, data_yaml: Path, epochs: int = 100,
                        batch_size: int = 16, model_size: str = 'yolov8n') -> str:
@@ -150,6 +165,8 @@ class ModelTrainer:
                           val_dataset: Optional[Dataset] = None,
                           epochs: int = 50,
                           lr: float = 0.001) -> Dict:
+        if not TORCH_AVAILABLE:
+            raise RuntimeError("PyTorch not available")
         self.model = SimpleDetectionModel()
         self.model.to(self.device)
         

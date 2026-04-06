@@ -57,6 +57,8 @@ class DetectionResult:
 
 
 class DryBeachRecognizer:
+    MAX_DETECT_SIZE = (1920, 1080)
+    
     def __init__(self, model_path: Optional[str] = None):
         self.model_path = model_path
         self.water_detector = WaterLineDetector()
@@ -66,6 +68,7 @@ class DryBeachRecognizer:
         self.calibrated = False
         
         self.result = DetectionResult()
+        self._scale_factor = 1.0
         
         logger.info("DryBeachRecognizer initialized")
     
@@ -80,49 +83,99 @@ class DryBeachRecognizer:
     def detect(self, image: np.ndarray,
               roi: Optional[RegionOfInterest] = None,
               method: str = 'multi') -> DetectionResult:
+        original_h, original_w = image.shape[:2]
+        max_w, max_h = self.MAX_DETECT_SIZE
+        
+        if original_w > max_w or original_h > max_h:
+            scale_w = max_w / original_w
+            scale_h = max_h / original_h
+            self._scale_factor = min(scale_w, scale_h)
+            
+            detect_w = int(original_w * self._scale_factor)
+            detect_h = int(original_h * self._scale_factor)
+            detect_image = cv2.resize(image, (detect_w, detect_h), interpolation=cv2.INTER_AREA)
+            
+            if roi:
+                scaled_roi = RegionOfInterest(
+                    int(roi.x * self._scale_factor),
+                    int(roi.y * self._scale_factor),
+                    int(roi.width * self._scale_factor),
+                    int(roi.height * self._scale_factor)
+                )
+            else:
+                scaled_roi = None
+        else:
+            self._scale_factor = 1.0
+            detect_image = image
+            scaled_roi = roi
+        
         roi_tuple = None
-        if roi:
-            roi_tuple = (roi.x, roi.y, roi.width, roi.height)
+        if scaled_roi:
+            roi_tuple = (scaled_roi.x, scaled_roi.y, scaled_roi.width, scaled_roi.height)
         
         if method == 'multi':
-            water_results = self.water_detector.detect_multi_method(image, roi_tuple)
-            self.result.water_line = water_results['final_line']
+            water_results = self.water_detector.detect_multi_method(detect_image, roi_tuple)
+            water_line = water_results['final_line']
             self.result.water_line_confidence = water_results['confidence']
         elif method == 'edge':
-            self.result.water_line = self.water_detector.detect_by_edge_detection(image, roi_tuple)
+            water_line = self.water_detector.detect_by_edge_detection(detect_image, roi_tuple)
         elif method == 'color':
-            self.result.water_line = self.water_detector.detect_by_color_segmentation(image, roi_tuple)
+            water_line = self.water_detector.detect_by_color_segmentation(detect_image, roi_tuple)
         else:
             raise ValueError(f"Unknown method: {method}")
         
-        dam_results = self.dam_detector.detect_dam_edges(image, roi_tuple)
-        self.result.dam_bbox = dam_results['bbox']
+        if water_line is not None and len(water_line) > 0:
+            self.result.water_line = water_line / self._scale_factor
+        else:
+            self.result.water_line = water_line
+        
+        dam_results = self.dam_detector.detect_dam_edges(detect_image, roi_tuple)
+        
+        def scale_bbox(bbox):
+            if bbox is None:
+                return None
+            x, y, w, h = bbox
+            return (int(x / self._scale_factor), int(y / self._scale_factor),
+                    int(w / self._scale_factor), int(h / self._scale_factor))
+        
+        def scale_edge(edge):
+            if edge is None:
+                return None
+            return (int(edge[0] / self._scale_factor), int(edge[1] / self._scale_factor),
+                    int(edge[2] / self._scale_factor), int(edge[3] / self._scale_factor))
+        
+        self.result.dam_bbox = scale_bbox(dam_results['bbox'])
         self.result.dam_edges = {
-            'left': dam_results['left_edge'],
-            'right': dam_results['right_edge'],
-            'top': dam_results['top_edge'],
-            'bottom': dam_results['bottom_edge']
+            'left': scale_edge(dam_results['left_edge']),
+            'right': scale_edge(dam_results['right_edge']),
+            'top': scale_edge(dam_results['top_edge']),
+            'bottom': scale_edge(dam_results['bottom_edge'])
         }
         
         if self.result.water_line is not None and self.result.dam_bbox is not None:
             dam_boundary = self.dam_detector.get_dam_boundary()
+            scaled_boundary = [(int(x / self._scale_factor), int(y / self._scale_factor)) 
+                             for x, y in dam_boundary]
             
             distance_result = self.distance_calculator.calculate_shortest_distance(
-                self.result.water_line, dam_boundary
+                self.result.water_line, scaled_boundary
             )
             
-            self.result.shortest_distance = distance_result['distance_pixels']
+            self.result.shortest_distance = distance_result['distance_pixels'] / self._scale_factor
             self.result.distance_meters = distance_result['distance_meters']
             
-            self.measurement_reporter.add_measurement(
-                'shortest_distance',
-                distance_result['distance_meters'],
-                'meters',
-                {
-                    'water_point': distance_result['point_water'],
-                    'dam_point': distance_result['point_dam']
-                }
-            )
+            if distance_result['point_water']:
+                wp = distance_result['point_water']
+                dp = distance_result['point_dam']
+                self.measurement_reporter.add_measurement(
+                    'shortest_distance',
+                    distance_result['distance_meters'],
+                    'meters',
+                    {
+                        'water_point': (int(wp[0] / self._scale_factor), int(wp[1] / self._scale_factor)),
+                        'dam_point': (int(dp[0] / self._scale_factor), int(dp[1] / self._scale_factor))
+                    }
+                )
             
             line_properties = self.distance_calculator.calculate_water_line_properties(
                 self.result.water_line

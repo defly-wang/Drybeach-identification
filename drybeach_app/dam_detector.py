@@ -113,9 +113,9 @@ class DamDetector:
             image = image[y:y+h, x:x+w]
         
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        ih, iw = gray.shape
         
         edges = cv2.Canny(gray, 30, 100)
-        
         edges = cv2.dilate(edges, None, iterations=2)
         
         lines = cv2.HoughLinesP(edges, 1, np.pi/180, 80,
@@ -130,32 +130,95 @@ class DamDetector:
                 
                 angle = np.arctan2(abs(y2 - y1), abs(x2 - x1)) * 180 / np.pi
                 
-                if angle > 70:
+                if angle > 60:
                     vertical_lines.append((min(x1, x2), y1, max(x1, x2), y2))
-                elif angle < 20:
+                elif angle < 30:
                     horizontal_lines.append((x1, min(y1, y2), x2, max(y1, y2)))
         
-        h, w = gray.shape
+        grad_y = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=5)
+        grad_strength = np.mean(np.abs(grad_y), axis=0)
         
-        if vertical_lines:
-            left_line = min(vertical_lines, key=lambda l: l[0])
-            right_line = max(vertical_lines, key=lambda l: l[2])
-            
-            self.left_edge = (left_line[0], left_line[1], left_line[2], left_line[3])
-            self.right_edge = (right_line[0], right_line[1], right_line[2], right_line[3])
-        else:
-            self.left_edge = (0, 0, 0, h)
-            self.right_edge = (w, 0, w, h)
+        threshold = np.percentile(grad_strength, 75)
+        significant_mask = grad_strength > threshold
         
-        if horizontal_lines:
-            top_line = min(horizontal_lines, key=lambda l: l[1])
-            bottom_line = max(horizontal_lines, key=lambda l: l[3])
+        dam_edges_found = False
+        
+        if vertical_lines and len(vertical_lines) < 50:
+            clustered_left_xs = []
+            clustered_right_xs = []
             
-            self.top_edge = (top_line[0], top_line[1], top_line[2], top_line[3])
-            self.bottom_edge = (bottom_line[0], bottom_line[1], bottom_line[2], bottom_line[3])
+            for vl in vertical_lines:
+                lx1, _, lx2, _ = vl
+                if lx1 < iw * 0.3:
+                    clustered_left_xs.append(lx1)
+                elif lx2 > iw * 0.7:
+                    clustered_right_xs.append(lx2)
+            
+            if clustered_left_xs:
+                left_x = int(np.median(clustered_left_xs))
+                dam_edges_found = True
+            else:
+                left_x = 0
+            
+            if clustered_right_xs:
+                right_x = int(np.median(clustered_right_xs))
+                dam_edges_found = True
+            else:
+                right_x = iw
+            
+            if left_x >= right_x:
+                left_x = 0
+                right_x = iw
+                dam_edges_found = False
         else:
-            self.top_edge = (0, 0, w, 0)
-            self.bottom_edge = (0, h, w, h)
+            left_x = 0
+            right_x = iw
+        
+        if dam_edges_found:
+            self.left_edge = (left_x, 0, left_x, ih)
+            self.right_edge = (right_x, 0, right_x, ih)
+        elif significant_mask.any():
+            edge_cols = np.where(significant_mask)[0]
+            if len(edge_cols) > 0:
+                left_x = int(np.percentile(edge_cols, 10))
+                right_x = int(np.percentile(edge_cols, 90))
+                self.left_edge = (left_x, 0, left_x, ih)
+                self.right_edge = (right_x, 0, right_x, ih)
+                dam_edges_found = True
+            else:
+                self.left_edge = (0, 0, 0, ih)
+                self.right_edge = (iw, 0, iw, ih)
+        else:
+            self.left_edge = (0, 0, 0, ih)
+            self.right_edge = (iw, 0, iw, ih)
+        
+        if horizontal_lines and len(horizontal_lines) < 30:
+            top_ys = [min(l[1], l[3]) for l in horizontal_lines if l[1] < ih * 0.4 or l[3] < ih * 0.4]
+            bottom_ys = [max(l[1], l[3]) for l in horizontal_lines if l[1] > ih * 0.5 or l[3] > ih * 0.5]
+            
+            top_y = int(np.median(top_ys)) if top_ys else 0
+            bottom_y = int(np.median(bottom_ys)) if bottom_ys else ih
+            
+            if top_y >= bottom_y:
+                top_y = 0
+                bottom_y = ih
+        else:
+            grad_x = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=5)
+            row_strength = np.mean(np.abs(grad_x), axis=1)
+            threshold_row = np.percentile(row_strength, 60)
+            
+            top_candidates = np.where(row_strength[:ih//2] > threshold_row)[0]
+            bottom_candidates = np.where(row_strength[ih//2:] > threshold_row)[0] + ih // 2
+            
+            top_y = int(np.median(top_candidates)) if len(top_candidates) > 0 else 0
+            bottom_y = int(np.median(bottom_candidates)) if len(bottom_candidates) > 0 else ih
+            
+            if top_y >= bottom_y:
+                top_y = 0
+                bottom_y = ih
+        
+        self.top_edge = (0, top_y, iw, top_y)
+        self.bottom_edge = (0, bottom_y, iw, bottom_y)
         
         if roi:
             self.left_edge = (self.left_edge[0] + x, self.left_edge[1] + y,
@@ -171,6 +234,11 @@ class DamDetector:
         dam_right_x = self.right_edge[2]
         dam_top_y = min(self.top_edge[1], self.top_edge[3])
         dam_bottom_y = max(self.bottom_edge[1], self.bottom_edge[3])
+        
+        if dam_right_x <= dam_left_x:
+            dam_right_x = dam_left_x + max(1, iw // 4)
+        if dam_bottom_y <= dam_top_y:
+            dam_bottom_y = dam_top_y + max(1, ih // 4)
         
         self.dam_bbox = (dam_left_x, dam_top_y, 
                         dam_right_x - dam_left_x, 
