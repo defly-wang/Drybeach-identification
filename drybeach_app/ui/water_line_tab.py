@@ -3,7 +3,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-                             QLabel, QFileDialog, QComboBox, QCheckBox, QMessageBox)
+                             QLabel, QFileDialog, QComboBox, QCheckBox, QMessageBox,
+                             QSpinBox)
 from PyQt6.QtCore import pyqtSignal
 
 
