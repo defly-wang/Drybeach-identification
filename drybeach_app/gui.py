@@ -330,32 +330,12 @@ class VideoExtractThread(QThread):
         self.output_dir = output_dir
         self.video_info = video_info
         self._stop = False
-        self._progress_thread = None
     
     def run(self):
         import subprocess
         import tempfile
         import shutil
-        import re
-        import threading
-        
-        def read_stderr(proc, lines_list):
-            import io
-            buf = io.BytesIO()
-            while True:
-                data = proc.stderr.read(1024)
-                if not data:
-                    break
-                buf.write(data)
-                while b'\r' in buf.getvalue():
-                    line = buf.getvalue().split(b'\r')[-1]
-                    try:
-                        decoded = line.decode('utf-8', errors='ignore')
-                        lines_list.append(decoded)
-                    except:
-                        pass
-                    buf = io.BytesIO()
-                    buf.write(line)
+        import time
         
         try:
             video_path = Path(self.video_path)
@@ -368,8 +348,9 @@ class VideoExtractThread(QThread):
             temp_dir = Path(tempfile.mkdtemp(prefix='drybeach_'))
             
             try:
+                target_count = self.value
                 if self.mode == 'count':
-                    frame_interval = total_frames // self.value if total_frames > 0 else 1
+                    frame_interval = total_frames // target_count if total_frames > 0 else 1
                     frame_interval = max(1, frame_interval)
                     select_filter = rf"not(mod(n\,{frame_interval}))"
                     cmd = [
@@ -377,7 +358,7 @@ class VideoExtractThread(QThread):
                         '-i', str(video_path),
                         '-vf', rf"select='{select_filter}'",
                         '-q:v', '2',
-                        '-frames:v', str(self.value),
+                        '-frames:v', str(target_count),
                         '-threads', '4',
                         '-y',
                         str(temp_dir / "frame_%06d.jpg")
@@ -399,58 +380,40 @@ class VideoExtractThread(QThread):
                 
                 process = subprocess.Popen(
                     cmd,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
                 )
-                
-                stderr_lines = []
-                self._progress_thread = threading.Thread(target=read_stderr, args=(process, stderr_lines))
-                self._progress_thread.start()
-                
-                while process.poll() is None:
-                    for line in stderr_lines[-10:]:
-                        if 'frame=' in line:
-                            match = re.search(r'frame=\s*(\d+)', line)
-                            if match:
-                                frame_count = int(match.group(1))
-                                if self.mode == 'count' and self.value > 0:
-                                    pct = min(95, int(frame_count / self.value * 100))
-                                else:
-                                    pct = min(95, int(frame_count / (total_frames / frame_interval + 1) * 100))
-                                self.progress_updated.emit(pct)
-                    QThread.msleep(100)
-                
-                self._progress_thread.join()
+                process.wait()
                 
                 if process.returncode != 0:
-                    stderr_text = ''.join(stderr_lines)
-                    error_msg = f"FFmpeg错误: {stderr_text[-500:]}"
-                    self.error_occurred.emit(error_msg)
+                    self.error_occurred.emit("FFmpeg执行失败")
                     return
                 
                 temp_files = sorted(temp_dir.glob("frame_*.jpg"))
                 
                 if not temp_files:
-                    self.error_occurred.emit("未提取到任何帧，请检查视频文件")
+                    self.error_occurred.emit("未提取到任何帧")
                     return
                 
                 saved_paths = []
+                total = len(temp_files)
+                
                 for i, temp_file in enumerate(temp_files):
                     dest_file = output_dir / f"{video_path.stem}_{temp_file.name}"
                     shutil.move(str(temp_file), str(dest_file))
                     saved_paths.append(dest_file)
                     
-                    frame_num = i * frame_interval if self.mode == 'count' else int(i * seconds_interval * fps)
+                    frame_num = i * frame_interval if self.mode == 'count' else int(i * self.value * fps)
                     self.frame_extracted.emit(frame_num, str(dest_file))
+                    self.progress_updated.emit(int((i + 1) / total * 100))
                 
-                self.progress_updated.emit(100)
                 self.finished.emit(saved_paths)
                 
             finally:
                 shutil.rmtree(temp_dir, ignore_errors=True)
             
         except FileNotFoundError:
-            self.error_occurred.emit("未找到FFmpeg，请确保已安装并添加到PATH环境变量")
+            self.error_occurred.emit("未找到FFmpeg")
         except Exception as e:
             self.error_occurred.emit(str(e))
 
