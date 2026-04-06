@@ -57,7 +57,7 @@ class DryBeachRecognizer:
         self.patch_size = self.model.overrides.get('imgsz', 64)
         logger.info(f"Loaded model from {model_path}, patch_size={self.patch_size}")
     
-    def detect(self, image: np.ndarray) -> DetectionResult:
+    def detect(self, image: np.ndarray, progress_callback=None) -> DetectionResult:
         if self.model is None:
             raise RuntimeError("Model not loaded")
         
@@ -65,6 +65,17 @@ class DryBeachRecognizer:
         
         self.result.class_map = np.zeros((img_h, img_w), dtype=np.uint8)
         class_counts = {name: 0 for name in self.CATEGORY_NAMES}
+        
+        total_patches = 0
+        for y in range(0, img_h - self.patch_size + 1, self.stride):
+            for x in range(0, img_w - self.patch_size + 1, self.stride):
+                total_patches += 1
+        
+        processed = 0
+        print(f"\n{'='*50}")
+        print(f"开始识别: 图像尺寸 {img_w}x{img_h}, 切片尺寸 {self.patch_size}, 步长 {self.stride}")
+        print(f"总切片数: {total_patches}")
+        print(f"{'='*50}")
         
         for y in range(0, img_h - self.patch_size + 1, self.stride):
             for x in range(0, img_w - self.patch_size + 1, self.stride):
@@ -80,12 +91,27 @@ class DryBeachRecognizer:
                 
                 self.result.class_map[y:y+self.patch_size, x:x+self.patch_size] = class_id
                 class_counts[self.CATEGORY_NAMES[class_id]] += 1
+                
+                processed += 1
+                if processed % 100 == 0 or processed == total_patches:
+                    pct = processed / total_patches * 100
+                    print(f"进度: {processed}/{total_patches} ({pct:.1f}%)")
+                    if progress_callback:
+                        progress_callback(int(pct))
         
         self.result.class_counts = class_counts
+        
+        print(f"\n{'='*50}")
+        print("识别结果统计:")
+        for name, count in class_counts.items():
+            pct = count / total_patches * 100 if total_patches > 0 else 0
+            print(f"  {name}: {count} ({pct:.1f}%)")
+        print(f"{'='*50}\n")
+        
         return self.result
     
-    def detect_and_visualize(self, image: np.ndarray) -> Tuple[DetectionResult, np.ndarray]:
-        self.detect(image)
+    def detect_and_visualize(self, image: np.ndarray, progress_callback=None) -> Tuple[DetectionResult, np.ndarray]:
+        self.detect(image, progress_callback=progress_callback)
         
         annotated = self._create_annotated_image(image)
         self.result.annotated_image = annotated

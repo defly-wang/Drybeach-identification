@@ -61,9 +61,13 @@ class ProcessingThread(QThread):
         
         results = []
         for i, img_path in enumerate(image_paths):
+            print(f"\n处理图片: {img_path}")
             image = cv2.imread(str(img_path))
             if image is not None:
-                result, annotated = recognizer.detect_and_visualize(image)
+                result, annotated = recognizer.detect_and_visualize(
+                    image, 
+                    progress_callback=self.progress_updated.emit
+                )
                 results.append({
                     'annotated': annotated,
                     'class_counts': result.class_counts,
