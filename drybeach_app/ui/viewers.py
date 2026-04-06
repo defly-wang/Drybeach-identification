@@ -434,3 +434,186 @@ class MarkImageViewer(QWidget):
         self.polygon_points = []
         self._mouse_pos = None
         self._update_display()
+
+
+class WaterLineViewer(QWidget):
+    line_drawn = pyqtSignal(list)
+    
+    def __init__(self):
+        super().__init__()
+        self.current_image = None
+        self.current_pixmap = None
+        self.displayed_size = QSize()
+        
+        self.mode = 'draw'
+        self.line_points = []
+        self._mouse_pos = None
+        
+        self._zoom_factor = 1.0
+        self._min_zoom = 0.1
+        self._max_zoom = 10.0
+        
+        self._setup_ui()
+        
+        self.canvas.mousePressEvent = self._canvas_mouse_press
+        self.canvas.mouseMoveEvent = self._canvas_mouse_move
+        self.canvas.mouseReleaseEvent = self._canvas_mouse_release
+        self.canvas.mouseDoubleClickEvent = self._canvas_double_click
+    
+    def _setup_ui(self):
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        self.canvas = QLabel()
+        self.canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.canvas.setStyleSheet("background-color: #2a2a2a;")
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.canvas.setMouseTracking(True)
+        
+        layout = QVBoxLayout()
+        layout.addWidget(self.scroll_area)
+        self.setLayout(layout)
+        
+        self.scroll_area.setWidget(self.canvas)
+    
+    def set_image(self, image: np.ndarray):
+        if image is None:
+            return
+        
+        if len(image.shape) == 2:
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+        else:
+            rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
+        self.current_image = rgb_image.copy()
+        h, w = rgb_image.shape[:2]
+        bytes_per_line = 3 * w
+        qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+        self.current_pixmap = QPixmap.fromImage(qt_image)
+        
+        self._zoom_factor = 1.0
+        self._update_display()
+    
+    def _update_display(self):
+        if self.current_pixmap is None:
+            return
+        
+        scaled_size = self.current_pixmap.size() * self._zoom_factor
+        scaled_pixmap = self.current_pixmap.scaled(
+            scaled_size, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+        self.displayed_size = scaled_pixmap.size()
+        
+        self.canvas.setFixedSize(self.displayed_size)
+        
+        overlay = self._create_overlay()
+        if overlay:
+            painter = QPainter(scaled_pixmap)
+            painter.drawPixmap(0, 0, overlay)
+            painter.end()
+        
+        self.canvas.setPixmap(scaled_pixmap)
+    
+    def _create_overlay(self) -> Optional[QPixmap]:
+        if self.displayed_size.isEmpty():
+            return None
+        
+        overlay = QPixmap(self.displayed_size)
+        overlay.fill(Qt.GlobalColor.transparent)
+        
+        painter = QPainter(overlay)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        
+        scale_x = self.displayed_size.width() / self.current_pixmap.width() if self.current_pixmap.width() > 0 else 1.0
+        scale_y = self.displayed_size.height() / self.current_pixmap.height() if self.current_pixmap.height() > 0 else 1.0
+        
+        if self.line_points and len(self.line_points) >= 2:
+            qt_color = QColor(0, 255, 255)
+            painter.setPen(QPen(qt_color, 3))
+            
+            disp_points = [(int(px * scale_x), int(py * scale_y)) for px, py in self.line_points]
+            
+            for i in range(len(disp_points) - 1):
+                p1 = disp_points[i]
+                p2 = disp_points[i + 1]
+                painter.drawLine(p1[0], p1[1], p2[0], p2[1])
+            
+            for pt in disp_points:
+                painter.setPen(QPen(qt_color, 3))
+                painter.setBrush(qt_color)
+                painter.drawEllipse(pt[0] - 5, pt[1] - 5, 10, 10)
+        
+        if self._mouse_pos and self.line_points:
+            qt_color = QColor(0, 255, 255)
+            if self.line_points:
+                last_pt = self.line_points[-1]
+                disp_last = (int(last_pt[0] * scale_x), int(last_pt[1] * scale_y))
+                painter.setPen(QPen(qt_color, 1))
+                painter.drawLine(disp_last[0], disp_last[1], int(self._mouse_pos[0]), int(self._mouse_pos[1]))
+        
+        painter.end()
+        return overlay
+    
+    def wheelEvent(self, event):
+        if self.current_pixmap is None:
+            return
+        
+        delta = event.angleDelta().y()
+        if delta > 0:
+            self._zoom_factor *= 1.1
+        else:
+            self._zoom_factor /= 1.1
+        
+        self._zoom_factor = max(self._min_zoom, min(self._max_zoom, self._zoom_factor))
+        self._update_display()
+    
+    def _canvas_mouse_press(self, event):
+        if self.current_pixmap is None:
+            return
+        
+        pos = event.position().toPoint()
+        
+        if event.button() == Qt.MouseButton.RightButton:
+            if self.line_points:
+                self.line_points.pop()
+                self._update_display()
+            return
+        
+        if event.button() == Qt.MouseButton.LeftButton:
+            if 0 <= pos.x() < self.displayed_size.width() and 0 <= pos.y() < self.displayed_size.height():
+                scale_x = self.current_pixmap.width() / self.displayed_size.width() if self.displayed_size.width() > 0 else 1.0
+                scale_y = self.current_pixmap.height() / self.displayed_size.height() if self.displayed_size.height() > 0 else 1.0
+                img_x = int(pos.x() * scale_x)
+                img_y = int(pos.y() * scale_y)
+                self.line_points.append((img_x, img_y))
+                self._update_display()
+    
+    def _canvas_mouse_move(self, event):
+        if self.current_pixmap is None:
+            return
+        
+        pos = event.position().toPoint()
+        
+        if 0 <= pos.x() < self.displayed_size.width() and 0 <= pos.y() < self.displayed_size.height():
+            self._mouse_pos = (pos.x(), pos.y())
+        else:
+            self._mouse_pos = None
+        
+        self._update_display()
+    
+    def _canvas_mouse_release(self, event):
+        pass
+    
+    def _canvas_double_click(self, event):
+        if self.current_pixmap is None:
+            return
+        
+        if event.button() == Qt.MouseButton.LeftButton and len(self.line_points) >= 2:
+            self.line_drawn.emit(list(self.line_points))
+    
+    def clear_line(self):
+        self.line_points = []
+        self._mouse_pos = None
+        self._update_display()

@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction
 
-from .viewers import ImageViewer, MarkImageViewer
+from .viewers import ImageViewer, MarkImageViewer, WaterLineViewer
 from .threads import ProcessingThread
 from .video_tab import VideoExtractWidget
 from .mark_tab import MarkSegmentationWidget
@@ -152,8 +152,7 @@ class DryBeachGUI(QMainWindow):
     def _create_water_line_tab(self) -> WaterLineTab:
         tab = WaterLineTab()
         tab.result_ready.connect(self.on_water_line_result)
-        tab.image_loaded.connect(self.on_water_line_image_loaded)
-        tab.roi_requested.connect(self.on_water_line_roi_requested)
+        tab.set_viewer(self.water_line_viewer)
         return tab
     
     def on_water_line_image_loaded(self, image_path: str):
@@ -163,12 +162,6 @@ class DryBeachGUI(QMainWindow):
             self.image_viewer.set_image(self.current_image)
             h, w = self.current_image.shape[:2]
             self.statusBar().showMessage(f"已加载: {self.current_image_path.name} ({w}x{h})")
-    
-    def on_water_line_roi_requested(self):
-        self.tabs.setCurrentIndex(1)
-        self.roi_mode_context = 'water_line'
-        self.image_viewer.set_mode('roi')
-        self.statusBar().showMessage("请在图像上拖动鼠标选择检测区域")
     
     def on_water_line_result(self, result_image):
         self.annotated_image = result_image
@@ -194,8 +187,12 @@ class DryBeachGUI(QMainWindow):
         self.mark_viewer = MarkImageViewer()
         self.mark_viewer.hide()
         
+        self.water_line_viewer = WaterLineViewer()
+        self.water_line_viewer.hide()
+        
         layout.addWidget(scroll_area)
         layout.addWidget(self.mark_viewer)
+        layout.addWidget(self.water_line_viewer)
         
         self.scroll_area = scroll_area
         
@@ -204,12 +201,17 @@ class DryBeachGUI(QMainWindow):
         return panel
     
     def on_tab_changed(self, index):
-        if index == 2:
-            self.scroll_area.hide()
+        self.scroll_area.hide()
+        self.mark_viewer.hide()
+        self.water_line_viewer.hide()
+        
+        if index == 1:
+            self.water_line_viewer.show()
+        elif index == 2:
             self.mark_viewer.show()
         else:
             self.scroll_area.show()
-            self.mark_viewer.hide()
+            self.image_viewer.show()
     
     def load_image(self):
         file_path, _ = QFileDialog.getOpenFileName(

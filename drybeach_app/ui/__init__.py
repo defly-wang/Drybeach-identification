@@ -1,4 +1,4 @@
-from .viewers import ImageViewer, MarkImageViewer
+from .viewers import ImageViewer, MarkImageViewer, WaterLineViewer
 from .threads import ProcessingThread, VideoExtractThread
 from .video_tab import VideoExtractWidget
 from .mark_tab import MarkSegmentationWidget
@@ -11,6 +11,7 @@ from .main_window import DryBeachGUI, launch_gui
 __all__ = [
     'ImageViewer',
     'MarkImageViewer',
+    'WaterLineViewer',
     'ProcessingThread',
     'VideoExtractThread',
     'VideoExtractWidget',
