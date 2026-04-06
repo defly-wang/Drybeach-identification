@@ -148,11 +148,17 @@ class MarkSegmentationWidget(QWidget):
             category_dir.mkdir(parents=True, exist_ok=True)
             
             for i, polygon_data in enumerate(polygons):
-                points = polygon_data['points']
-                if len(points) < 3:
+                disp_points = polygon_data['points']
+                if len(disp_points) < 3:
                     continue
                 
-                pts = np.array(points, dtype=np.int32)
+                img_points = []
+                for px, py in disp_points:
+                    ix = int(px / self._viewer._zoom_factor)
+                    iy = int(py / self._viewer._zoom_factor)
+                    img_points.append([ix, iy])
+                
+                pts = np.array(img_points, dtype=np.int32)
                 
                 x, y, w, h = cv2.boundingRect(pts)
                 x = max(0, x)

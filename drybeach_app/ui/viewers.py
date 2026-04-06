@@ -368,12 +368,11 @@ class MarkImageViewer(QLabel):
         
         if self.mode == 'draw' and self.current_category:
             if event.button() == Qt.MouseButton.LeftButton:
-                img_x = int((pos.x() - self.offset_x) / self._zoom_factor)
-                img_y = int((pos.y() - self.offset_y) / self._zoom_factor)
-                img_x = max(0, min(img_x, self.current_pixmap.width()))
-                img_y = max(0, min(img_y, self.current_pixmap.height()))
-                self.polygon_points.append((img_x, img_y))
-                self._update_display()
+                disp_x = pos.x() - self.offset_x
+                disp_y = pos.y() - self.offset_y
+                if 0 <= disp_x < self.displayed_size.width() and 0 <= disp_y < self.displayed_size.height():
+                    self.polygon_points.append((disp_x, disp_y))
+                    self._update_display()
     
     def mouseMoveEvent(self, event):
         if self.current_pixmap is None:
@@ -382,11 +381,12 @@ class MarkImageViewer(QLabel):
         pos = event.position().toPoint()
         
         if self.mode == 'draw' and self.current_category and self.polygon_points:
-            img_x = int((pos.x() - self.offset_x) / self._zoom_factor)
-            img_y = int((pos.y() - self.offset_y) / self._zoom_factor)
-            img_x = max(0, min(img_x, self.current_pixmap.width()))
-            img_y = max(0, min(img_y, self.current_pixmap.height()))
-            self._mouse_pos = (img_x, img_y)
+            disp_x = pos.x() - self.offset_x
+            disp_y = pos.y() - self.offset_y
+            if 0 <= disp_x < self.displayed_size.width() and 0 <= disp_y < self.displayed_size.height():
+                self._mouse_pos = (disp_x, disp_y)
+            else:
+                self._mouse_pos = None
             self._update_display()
             return
         
@@ -415,9 +415,10 @@ class MarkImageViewer(QLabel):
                 self.regions[self.current_category].append({
                     'points': list(self.polygon_points)
                 })
-                self.region_drawn.emit(self.current_category, self.polygon_points)
+                self.region_drawn.emit(self.current_category, tuple(self.polygon_points))
             
             self.polygon_points = []
+            self._mouse_pos = None
             self._update_display()
     
     def clear_regions(self):
