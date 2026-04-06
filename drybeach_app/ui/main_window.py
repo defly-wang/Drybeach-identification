@@ -30,6 +30,7 @@ class DryBeachGUI(QMainWindow):
         self.roi_start = None
         self.roi_end = None
         self.roi_mode = False
+        self.roi_mode_context = None
         self.calibration_done = False
         self.calibration_points = []
         self.training_data_path = None
@@ -152,6 +153,7 @@ class DryBeachGUI(QMainWindow):
         tab = WaterLineTab()
         tab.result_ready.connect(self.on_water_line_result)
         tab.image_loaded.connect(self.on_water_line_image_loaded)
+        tab.roi_requested.connect(self.on_water_line_roi_requested)
         return tab
     
     def on_water_line_image_loaded(self, image_path: str):
@@ -161,6 +163,12 @@ class DryBeachGUI(QMainWindow):
             self.image_viewer.set_image(self.current_image)
             h, w = self.current_image.shape[:2]
             self.statusBar().showMessage(f"已加载: {self.current_image_path.name} ({w}x{h})")
+    
+    def on_water_line_roi_requested(self):
+        self.tabs.setCurrentIndex(1)
+        self.roi_mode_context = 'water_line'
+        self.image_viewer.set_mode('roi')
+        self.statusBar().showMessage("请在图像上拖动鼠标选择检测区域")
     
     def on_water_line_result(self, result_image):
         self.annotated_image = result_image
@@ -281,7 +289,14 @@ class DryBeachGUI(QMainWindow):
     def on_roi_selected(self, roi_tuple: Tuple[int, int, int, int]):
         self.roi = roi_tuple
         x, y, w, h = roi_tuple
-        self.statusBar().showMessage(f"ROI已设置: ({x},{y}) {w}x{h}")
+        self.image_viewer.set_mode('normal')
+        
+        if self.roi_mode_context == 'water_line':
+            self.water_line_tab.on_roi_selected(roi_tuple)
+            self.tabs.setCurrentIndex(1)
+            self.roi_mode_context = None
+        else:
+            self.statusBar().showMessage(f"ROI已设置: ({x},{y}) {w}x{h}")
     
     def on_calibration_started(self):
         self.image_viewer.set_mode('calibration')

@@ -11,6 +11,8 @@ from PyQt6.QtCore import pyqtSignal
 class WaterLineTab(QWidget):
     result_ready = pyqtSignal(object)
     image_loaded = pyqtSignal(str)
+    roi_requested = pyqtSignal()
+    detection_requested = pyqtSignal(dict)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -36,6 +38,22 @@ class WaterLineTab(QWidget):
         self.lbl_image_info = QLabel("未加载图片")
         self.lbl_image_info.setStyleSheet("color: #666;")
         layout.addWidget(self.lbl_image_info)
+        
+        roi_layout = QHBoxLayout()
+        self.btn_set_roi = QPushButton("设置检测区域")
+        self.btn_set_roi.clicked.connect(self.set_roi)
+        self.btn_set_roi.setEnabled(False)
+        roi_layout.addWidget(self.btn_set_roi)
+        
+        self.btn_clear_roi = QPushButton("清除区域")
+        self.btn_clear_roi.clicked.connect(self.clear_roi)
+        self.btn_clear_roi.setEnabled(False)
+        roi_layout.addWidget(self.btn_clear_roi)
+        layout.addLayout(roi_layout)
+        
+        self.lbl_roi_info = QLabel("未设置检测区域")
+        self.lbl_roi_info.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self.lbl_roi_info)
         
         method_layout = QHBoxLayout()
         method_layout.addWidget(QLabel("检测方法:"))
@@ -88,9 +106,26 @@ class WaterLineTab(QWidget):
                 h, w = self.current_image.shape[:2]
                 self.lbl_image_info.setText(f"已加载: {self.current_image_path.name} ({w}x{h})")
                 self.btn_detect.setEnabled(True)
+                self.btn_set_roi.setEnabled(True)
                 self.detected_line = None
+                self.roi = None
                 self.lbl_result.setText("")
+                self.lbl_roi_info.setText("未设置检测区域")
                 self.image_loaded.emit(file_path)
+    
+    def set_roi(self):
+        self.roi_requested.emit()
+    
+    def on_roi_selected(self, roi):
+        self.roi = roi
+        x, y, w, h = roi
+        self.lbl_roi_info.setText(f"已设置: ({x},{y}) {w}x{h}")
+        self.btn_clear_roi.setEnabled(True)
+    
+    def clear_roi(self):
+        self.roi = None
+        self.lbl_roi_info.setText("未设置检测区域")
+        self.btn_clear_roi.setEnabled(False)
     
     def detect_water_line(self):
         if self.current_image is None:
@@ -101,16 +136,21 @@ class WaterLineTab(QWidget):
         
         detector = WaterLineDetector()
         method = self.cmb_method.currentText()
+        roi = self.roi
         
         if method == "边缘检测":
-            self.detected_line = detector.detect_by_edge_detection(self.current_image)
+            self.detected_line = detector.detect_by_edge_detection(self.current_image, roi=roi)
         elif method == "颜色分割":
-            self.detected_line = detector.detect_by_color_segmentation(self.current_image)
+            self.detected_line = detector.detect_by_color_segmentation(self.current_image, roi=roi)
         else:
-            results = detector.detect_multi_method(self.current_image)
+            results = detector.detect_multi_method(self.current_image, roi=roi)
             self.detected_line = results['final_line']
         
         result_image = self.current_image.copy()
+        
+        if roi:
+            x, y, w, h = roi
+            cv2.rectangle(result_image, (x, y), (x+w, y+h), (0, 255, 0), 2)
         
         if self.detected_line is not None and len(self.detected_line) > 0:
             if self.chk_fill.isChecked():
