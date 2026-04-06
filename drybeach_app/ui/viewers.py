@@ -3,7 +3,7 @@ import numpy as np
 from typing import Optional, Tuple
 
 from PyQt6.QtWidgets import QLabel, QSizePolicy
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen
 
 
