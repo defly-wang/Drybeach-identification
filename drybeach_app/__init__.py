@@ -5,6 +5,17 @@ from .dam_detector import DamDetector, DamEdgeDetector, visualize_dam_detection
 from .distance_calculator import DistanceCalculator, MeasurementReporter, draw_measurement_annotations
 from .recognizer import DryBeachRecognizer, DetectionResult, load_recognizer_model, process_video_frames
 
+from .ui import (
+    ImageViewer,
+    MarkImageViewer,
+    ProcessingThread,
+    VideoExtractThread,
+    VideoExtractWidget,
+    MarkSegmentationWidget,
+    DryBeachGUI,
+    launch_gui,
+)
+
 __all__ = [
     'VideoFrameExtractor',
     'VideoStreamGrabber', 
@@ -25,7 +36,15 @@ __all__ = [
     'DryBeachRecognizer',
     'DetectionResult',
     'load_recognizer_model',
-    'process_video_frames'
+    'process_video_frames',
+    'ImageViewer',
+    'MarkImageViewer',
+    'ProcessingThread',
+    'VideoExtractThread',
+    'VideoExtractWidget',
+    'MarkSegmentationWidget',
+    'DryBeachGUI',
+    'launch_gui',
 ]
 
 __version__ = '1.0.0'
