@@ -12,6 +12,13 @@ from .viewers import MarkImageViewer
 class MarkSegmentationWidget(QWidget):
     image_opened = pyqtSignal(str)
     
+    category_safe_names = {
+        '水面': 'water',
+        '摊面': 'beach',
+        '分界线': 'boundary',
+        '坝体': 'dam'
+    }
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_image = None
@@ -144,7 +151,8 @@ class MarkSegmentationWidget(QWidget):
             if not polygons:
                 continue
             
-            category_dir = output_dir / category
+            safe_name = self.category_safe_names.get(category, category)
+            category_dir = output_dir / safe_name
             category_dir.mkdir(parents=True, exist_ok=True)
             
             for i, polygon_data in enumerate(polygons):
@@ -172,7 +180,7 @@ class MarkSegmentationWidget(QWidget):
                 if roi.size > 0:
                     roi_masked = cv2.bitwise_and(roi, roi, mask=mask_roi)
                     
-                    output_file = category_dir / f"{original_name}_{category}_{i+1}.jpg"
+                    output_file = category_dir / f"{original_name}_{safe_name}_{i+1}.jpg"
                     cv2.imwrite(str(output_file), roi_masked)
                     total_saved += 1
         
