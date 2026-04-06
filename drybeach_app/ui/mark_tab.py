@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
                              QFileDialog, QMessageBox, QComboBox, QSpinBox, QProgressDialog)
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal, Qt
 
 from .viewers import MarkImageViewer
 
