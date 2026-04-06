@@ -235,18 +235,13 @@ class DryBeachGUI(QMainWindow):
         self.image_viewer.calibration_point_clicked.connect(self.on_calibration_point)
         scroll_area.setWidget(self.image_viewer)
         
-        scroll_area_mark = QScrollArea()
-        scroll_area_mark.setWidgetResizable(True)
-        
         self.mark_viewer = MarkImageViewer()
-        scroll_area_mark.setWidget(self.mark_viewer)
-        scroll_area_mark.hide()
+        self.mark_viewer.hide()
         
         layout.addWidget(scroll_area)
-        layout.addWidget(scroll_area_mark)
+        layout.addWidget(self.mark_viewer)
         
         self.scroll_area = scroll_area
-        self.scroll_area_mark = scroll_area_mark
         
         self.tabs.currentChanged.connect(self.on_tab_changed)
         
@@ -255,10 +250,10 @@ class DryBeachGUI(QMainWindow):
     def on_tab_changed(self, index):
         if index == 3:
             self.scroll_area.hide()
-            self.scroll_area_mark.show()
+            self.mark_viewer.show()
         else:
             self.scroll_area.show()
-            self.scroll_area_mark.hide()
+            self.mark_viewer.hide()
     
     def load_image(self):
         file_path, _ = QFileDialog.getOpenFileName(

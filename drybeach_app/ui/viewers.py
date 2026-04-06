@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from typing import Optional, Tuple
 
-from PyQt6.QtWidgets import QLabel, QSizePolicy
+from PyQt6.QtWidgets import QLabel, QSizePolicy, QWidget, QScrollArea
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
 
@@ -210,22 +210,30 @@ class ImageViewer(QLabel):
         self.clear()
 
 
-class MarkImageViewer(QLabel):
+class MarkImageViewer(QWidget):
     region_drawn = pyqtSignal(str, tuple)
     
     def __init__(self):
         super().__init__()
         self.current_image = None
         self.current_pixmap = None
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setMinimumSize(400, 300)
-        self.setStyleSheet("border: 2px solid #ccc; background-color: #2a2a2a;")
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setMouseTracking(True)
         
-        self.scale = 1.0
-        self.offset_x = 0
-        self.offset_y = 0
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(False)
+        self.scroll_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.scroll_area.setStyleSheet("border: 2px solid #ccc; background-color: #2a2a2a;")
+        
+        self.canvas = QLabel()
+        self.canvas.setMouseTracking(True)
+        self.canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.canvas.setStyleSheet("background-color: #2a2a2a;")
+        
+        self.scroll_area.setWidget(self.canvas)
+        layout.addWidget(self.scroll_area)
+        
         self.displayed_size = QSize()
         
         self.mode = 'normal'
@@ -239,13 +247,16 @@ class MarkImageViewer(QLabel):
         }
         
         self.polygon_points = []
-        self.is_panning = False
-        self.pan_start = None
         self._mouse_pos = None
         
         self._zoom_factor = 1.0
         self._min_zoom = 0.1
         self._max_zoom = 10.0
+        
+        self.canvas.mousePressEvent = self._canvas_mouse_press
+        self.canvas.mouseMoveEvent = self._canvas_mouse_move
+        self.canvas.mouseReleaseEvent = self._canvas_mouse_release
+        self.canvas.mouseDoubleClickEvent = self._canvas_double_click
     
     def set_image(self, image: np.ndarray):
         if image is None:
@@ -276,8 +287,7 @@ class MarkImageViewer(QLabel):
         )
         self.displayed_size = scaled_pixmap.size()
         
-        self.offset_x = (self.size().width() - self.displayed_size.width()) // 2
-        self.offset_y = (self.size().height() - self.displayed_size.height()) // 2
+        self.canvas.setFixedSize(self.displayed_size)
         
         overlay = self._create_overlay()
         if overlay:
@@ -285,7 +295,7 @@ class MarkImageViewer(QLabel):
             painter.drawPixmap(0, 0, overlay)
             painter.end()
         
-        self.setPixmap(scaled_pixmap)
+        self.canvas.setPixmap(scaled_pixmap)
     
     def _create_overlay(self) -> Optional[QPixmap]:
         if self.displayed_size.isEmpty():
@@ -296,6 +306,9 @@ class MarkImageViewer(QLabel):
         
         painter = QPainter(overlay)
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        
+        scale_x = self.displayed_size.width() / self.current_pixmap.width() if self.current_pixmap.width() > 0 else 1.0
+        scale_y = self.displayed_size.height() / self.current_pixmap.height() if self.current_pixmap.height() > 0 else 1.0
         
         for category, polygons in self.regions.items():
             color = self.region_colors.get(category, (255, 255, 0))
@@ -308,10 +321,11 @@ class MarkImageViewer(QLabel):
                     for i in range(len(points)):
                         p1 = points[i]
                         p2 = points[(i + 1) % len(points)]
-                        painter.drawLine(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
+                        painter.drawLine(int(p1[0] * scale_x), int(p1[1] * scale_y),
+                                        int(p2[0] * scale_x), int(p2[1] * scale_y))
                     
-                    min_x = min(p[0] for p in points)
-                    min_y = min(p[1] for p in points)
+                    min_x = min(p[0] * scale_x for p in points)
+                    min_y = min(p[1] * scale_y for p in points)
                     painter.setPen(QPen(qt_color, 1))
                     font = painter.font()
                     font.setPointSize(10)
@@ -322,22 +336,24 @@ class MarkImageViewer(QLabel):
             color = self.region_colors.get(self.current_category, (255, 255, 0))
             qt_color = QColor(*reversed(color))
             
-            for i in range(len(self.polygon_points) - 1):
-                p1 = self.polygon_points[i]
-                p2 = self.polygon_points[i + 1]
-                painter.setPen(QPen(qt_color, 2))
-                painter.drawLine(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
+            disp_points = [(int(px * scale_x), int(py * scale_y)) for px, py in self.polygon_points]
             
-            if self._mouse_pos and len(self.polygon_points) > 0:
-                last_pt = self.polygon_points[-1]
+            for i in range(len(disp_points) - 1):
+                p1 = disp_points[i]
+                p2 = disp_points[i + 1]
+                painter.setPen(QPen(qt_color, 2))
+                painter.drawLine(p1[0], p1[1], p2[0], p2[1])
+            
+            if self._mouse_pos and len(disp_points) > 0:
+                last_pt = disp_points[-1]
                 preview_color = QColor(255, 255, 255)
                 painter.setPen(QPen(preview_color, 1))
-                painter.drawLine(int(last_pt[0]), int(last_pt[1]), int(self._mouse_pos[0]), int(self._mouse_pos[1]))
+                painter.drawLine(last_pt[0], last_pt[1], int(self._mouse_pos[0]), int(self._mouse_pos[1]))
             
-            for pt in self.polygon_points:
+            for pt in disp_points:
                 painter.setPen(QPen(qt_color, 2))
                 painter.setBrush(qt_color)
-                painter.drawEllipse(int(pt[0]) - 5, int(pt[1]) - 5, 10, 10)
+                painter.drawEllipse(pt[0] - 5, pt[1] - 5, 10, 10)
         
         painter.end()
         return overlay
@@ -355,58 +371,44 @@ class MarkImageViewer(QLabel):
         self._zoom_factor = max(self._min_zoom, min(self._max_zoom, self._zoom_factor))
         self._update_display()
     
-    def mousePressEvent(self, event):
+    def _canvas_mouse_press(self, event):
         if self.current_pixmap is None:
             return
         
         pos = event.position().toPoint()
         
         if event.button() == Qt.MouseButton.RightButton:
-            self.is_panning = True
-            self.pan_start = pos
+            self.scroll_area.wheelEvent(event)
             return
         
         if self.mode == 'draw' and self.current_category:
             if event.button() == Qt.MouseButton.LeftButton:
-                disp_x = pos.x() - self.offset_x
-                disp_y = pos.y() - self.offset_y
-                if 0 <= disp_x < self.displayed_size.width() and 0 <= disp_y < self.displayed_size.height():
-                    self.polygon_points.append((disp_x, disp_y))
+                if 0 <= pos.x() < self.displayed_size.width() and 0 <= pos.y() < self.displayed_size.height():
+                    scale_x = self.current_pixmap.width() / self.displayed_size.width() if self.displayed_size.width() > 0 else 1.0
+                    scale_y = self.current_pixmap.height() / self.displayed_size.height() if self.displayed_size.height() > 0 else 1.0
+                    img_x = int(pos.x() * scale_x)
+                    img_y = int(pos.y() * scale_y)
+                    self.polygon_points.append((img_x, img_y))
                     self._update_display()
     
-    def mouseMoveEvent(self, event):
+    def _canvas_mouse_move(self, event):
         if self.current_pixmap is None:
             return
         
         pos = event.position().toPoint()
         
         if self.mode == 'draw' and self.current_category and self.polygon_points:
-            disp_x = pos.x() - self.offset_x
-            disp_y = pos.y() - self.offset_y
-            if 0 <= disp_x < self.displayed_size.width() and 0 <= disp_y < self.displayed_size.height():
-                self._mouse_pos = (disp_x, disp_y)
+            if 0 <= pos.x() < self.displayed_size.width() and 0 <= pos.y() < self.displayed_size.height():
+                self._mouse_pos = (pos.x(), pos.y())
             else:
                 self._mouse_pos = None
             self._update_display()
-            return
-        
-        if self.is_panning and self.pan_start:
-            dx = pos.x() - self.pan_start.x()
-            dy = pos.y() - self.pan_start.y()
-            self.offset_x += dx
-            self.offset_y += dy
-            self.pan_start = pos
-            self._update_display()
     
-    def mouseReleaseEvent(self, event):
-        if self.current_pixmap is None:
-            return
-        
+    def _canvas_mouse_release(self, event):
         if event.button() == Qt.MouseButton.RightButton:
-            self.is_panning = False
-            self.pan_start = None
+            pass
     
-    def mouseDoubleClickEvent(self, event):
+    def _canvas_double_click(self, event):
         if self.current_pixmap is None:
             return
         
