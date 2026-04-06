@@ -417,6 +417,8 @@ class VideoExtractThread(QThread):
 
 
 class VideoExtractWidget(QWidget):
+    thumbnail_clicked = pyqtSignal(str)
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.video_path = None
@@ -494,7 +496,9 @@ class VideoExtractWidget(QWidget):
         self.list_thumbnails.setIconSize(QSize(120, 90))
         self.list_thumbnails.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.list_thumbnails.setMaximumHeight(200)
-        self.list_thumbnails.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.list_thumbnails.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.list_thumbnails.itemClicked.connect(self.on_thumbnail_clicked)
+        self._thumbnail_paths = []
         layout.addWidget(self.list_thumbnails)
         
         self.lbl_status = QLabel("")
@@ -607,6 +611,7 @@ class VideoExtractWidget(QWidget):
         self.btn_extract.setEnabled(False)
         self.list_thumbnails.clear()
         self.extracted_frames = []
+        self._thumbnail_paths = []
         
         self.extract_thread = VideoExtractThread(
             self.video_path, mode, value, self.save_dir, self.video_info
@@ -622,12 +627,14 @@ class VideoExtractWidget(QWidget):
         
         if isinstance(frame_data, str):
             pixmap = QPixmap(frame_data)
+            self._thumbnail_paths.append(frame_data)
         else:
             rgb_frame = cv2.cvtColor(frame_data, cv2.COLOR_BGR2RGB)
             h, w = rgb_frame.shape[:2]
             bytes_per_line = 3 * w
             qt_image = QImage(rgb_frame.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
             pixmap = QPixmap.fromImage(qt_image)
+            self._thumbnail_paths.append(None)
         
         icon_pixmap = pixmap.scaled(120, 90, Qt.AspectRatioMode.KeepAspectRatio, 
                             Qt.TransformationMode.SmoothTransformation)
@@ -640,6 +647,13 @@ class VideoExtractWidget(QWidget):
         self.list_thumbnails.addItem(item)
         
         self.lbl_status.setText(f"已提取 {len(self.extracted_frames)} 帧")
+    
+    def on_thumbnail_clicked(self, item):
+        row = self.list_thumbnails.row(item)
+        if row < len(self._thumbnail_paths):
+            path = self._thumbnail_paths[row]
+            if path:
+                self.thumbnail_clicked.emit(path)
     
     def on_extraction_complete(self, saved_paths: List[Path]):
         self.progress_bar.setValue(100)
@@ -732,6 +746,7 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         self.tabs = QTabWidget()
         
         self.video_extract_widget = VideoExtractWidget()
+        self.video_extract_widget.thumbnail_clicked.connect(self.load_image_from_path)
         self.tabs.addTab(self.video_extract_widget, "视频提取")
         
         detection_tab = self._create_detection_tab()
@@ -876,6 +891,15 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
                 self.image_viewer.set_image(self.current_image)
                 h, w = self.current_image.shape[:2]
                 self.lbl_status.setText(f"已加载: {self.current_image_path.name} ({w}x{h})")
+    
+    def load_image_from_path(self, file_path: str):
+        self.current_image_path = Path(file_path)
+        self.current_image = cv2.imread(file_path)
+        
+        if self.current_image is not None:
+            self.image_viewer.set_image(self.current_image)
+            h, w = self.current_image.shape[:2]
+            self.lbl_status.setText(f"已加载: {self.current_image_path.name} ({w}x{h})")
     
     def toggle_roi_mode(self):
         self.roi_mode = not self.roi_mode
