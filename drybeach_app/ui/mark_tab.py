@@ -3,10 +3,69 @@ from pathlib import Path
 import cv2
 import numpy as np
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-                             QFileDialog, QMessageBox, QComboBox, QSpinBox)
-from PyQt6.QtCore import pyqtSignal
+                             QFileDialog, QMessageBox, QComboBox, QSpinBox, QProgressDialog)
+from PyQt6.QtCore import QThread, pyqtSignal
 
 from .viewers import MarkImageViewer
+
+
+class SegmentationThread(QThread):
+    progress = pyqtSignal(int, int)
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+    
+    def __init__(self, img, regions, output_dir, original_name, patch_size, stride, category_safe_names):
+        super().__init__()
+        self.img = img
+        self.regions = regions
+        self.output_dir = output_dir
+        self.original_name = original_name
+        self.patch_size = patch_size
+        self.stride = stride
+        self.category_safe_names = category_safe_names
+    
+    def run(self):
+        try:
+            img_h, img_w = self.img.shape[:2]
+            
+            all_masks = {}
+            for category, polygons in self.regions.items():
+                if not polygons:
+                    continue
+                mask = np.zeros((img_h, img_w), dtype=np.uint8)
+                for polygon_data in polygons:
+                    pts = np.array([[int(px), int(py)] for px, py in polygon_data['points']], dtype=np.int32)
+                    cv2.fillPoly(mask, [pts], 255)
+                all_masks[category] = mask
+            
+            counts = {cat: 0 for cat in all_masks.keys()}
+            
+            total_steps = ((img_h - self.patch_size) // self.stride + 1) * ((img_w - self.patch_size) // self.stride + 1)
+            current_step = 0
+            
+            for y in range(0, img_h - self.patch_size + 1, self.stride):
+                for x in range(0, img_w - self.patch_size + 1, self.stride):
+                    center_x = x + self.patch_size // 2
+                    center_y = y + self.patch_size // 2
+                    
+                    for category, mask in all_masks.items():
+                        if mask[center_y, center_x] > 0:
+                            safe_name = self.category_safe_names.get(category, category)
+                            category_dir = self.output_dir / safe_name
+                            category_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            patch = self.img[y:y+self.patch_size, x:x+self.patch_size]
+                            output_file = category_dir / f"{self.original_name}_{y}_{x}.jpg"
+                            cv2.imwrite(str(output_file), patch)
+                            counts[category] += 1
+                            break
+                    
+                    current_step += 1
+                    self.progress.emit(current_step, total_steps)
+            
+            self.finished.emit(counts)
+        except Exception as e:
+            self.error.emit(str(e))
 
 
 class MarkSegmentationWidget(QWidget):
@@ -167,39 +226,42 @@ class MarkSegmentationWidget(QWidget):
         
         img = self._viewer.current_image
         img_h, img_w = img.shape[:2]
+        total_steps = ((img_h - patch_size) // stride + 1) * ((img_w - patch_size) // stride + 1)
         
-        all_masks = {}
-        for category, polygons in regions.items():
-            if not polygons:
-                continue
-            mask = np.zeros((img_h, img_w), dtype=np.uint8)
-            for polygon_data in polygons:
-                pts = np.array([[int(px), int(py)] for px, py in polygon_data['points']], dtype=np.int32)
-                cv2.fillPoly(mask, [pts], 255)
-            all_masks[category] = mask
+        self.progress_dialog = QProgressDialog("正在分割图像...", "取消", 0, total_steps, self)
+        self.progress_dialog.setWindowTitle("处理中")
+        self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        self.progress_dialog.setMinimumDuration(0)
+        self.progress_dialog.setValue(0)
         
-        counts = {cat: 0 for cat in all_masks.keys()}
-        
-        for y in range(0, img_h - patch_size + 1, stride):
-            for x in range(0, img_w - patch_size + 1, stride):
-                center_x = x + patch_size // 2
-                center_y = y + patch_size // 2
-                
-                for category, mask in all_masks.items():
-                    if mask[center_y, center_x] > 0:
-                        safe_name = self.category_safe_names.get(category, category)
-                        category_dir = output_dir / safe_name
-                        category_dir.mkdir(parents=True, exist_ok=True)
-                        
-                        patch = img[y:y+patch_size, x:x+patch_size]
-                        output_file = category_dir / f"{original_name}_{y}_{x}.jpg"
-                        cv2.imwrite(str(output_file), patch)
-                        counts[category] += 1
-                        break
-        
+        self._segment_thread = SegmentationThread(
+            img, regions, output_dir, original_name, patch_size, stride, self.category_safe_names
+        )
+        self._segment_thread.progress.connect(self._on_segment_progress)
+        self._segment_thread.finished.connect(self._on_segment_finished)
+        self._segment_thread.error.connect(self._on_segment_error)
+        self.progress_dialog.canceled.connect(self._on_segment_canceled)
+        self._segment_thread.start()
+    
+    def _on_segment_progress(self, current, total):
+        self.progress_dialog.setValue(current)
+        self.progress_dialog.setLabelText(f"正在分割图像... {current}/{total}")
+    
+    def _on_segment_finished(self, counts):
+        self.progress_dialog.close()
         total_saved = sum(counts.values())
-        self.lbl_info.setText(f"已分割保存 {total_saved} 张图片: 水面{counts['水面']} 滩面{counts['摊面']} 分界线{counts['分界线']} 坝体{counts['坝体']}")
-        QMessageBox.information(self, "完成", f"已分割保存 {total_saved} 张图片到:\n{output_dir}")
+        self.lbl_info.setText(f"已分割保存 {total_saved} 张图片: 水面{counts.get('水面',0)} 滩面{counts.get('摊面',0)} 分界线{counts.get('分界线',0)} 坝体{counts.get('坝体',0)}")
+        QMessageBox.information(self, "完成", f"已分割保存 {total_saved} 张图片")
+    
+    def _on_segment_error(self, error_msg):
+        self.progress_dialog.close()
+        QMessageBox.critical(self, "错误", f"分割失败: {error_msg}")
+    
+    def _on_segment_canceled(self):
+        if hasattr(self, '_segment_thread') and self._segment_thread.isRunning():
+            self._segment_thread.terminate()
+            self._segment_thread.wait()
+        self.lbl_info.setText("已取消分割")
     
     def set_image_viewer(self, viewer: MarkImageViewer):
         self._viewer = viewer
