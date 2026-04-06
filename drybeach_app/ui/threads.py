@@ -83,8 +83,6 @@ class ProcessingThread(QThread):
     
     def _process_training(self):
         from drybeach_app.model_trainer import ModelTrainer
-        from sklearn.model_selection import train_test_split
-        import shutil
         
         data_path = self.params['data_path']
         epochs = self.params['epochs']
@@ -114,24 +112,27 @@ class ProcessingThread(QThread):
         if not all_images:
             raise ValueError("未找到任何训练图片")
         
-        train_files, val_files = train_test_split(all_images, test_size=0.2, random_state=42)
+        import random
+        random.shuffle(all_images)
+        split_idx = int(len(all_images) * 0.8)
+        train_files = all_images[:split_idx]
+        val_files = all_images[split_idx:]
         
         total = len(all_images)
         processed = 0
         
         for img_path, cat_idx in train_files:
-            self._copy_and_label(img_path, cat_idx, train_img_dir, train_lbl_dir, categories)
+            self._copy_and_label(img_path, cat_idx, train_img_dir, train_lbl_dir)
             processed += 1
             self.progress_updated.emit(int(processed / total * 50))
         
         for img_path, cat_idx in val_files:
-            self._copy_and_label(img_path, cat_idx, val_img_dir, val_lbl_dir, categories)
+            self._copy_and_label(img_path, cat_idx, val_img_dir, val_lbl_dir)
             processed += 1
             self.progress_updated.emit(int(processed / total * 50))
         
         config_path = temp_dataset / 'data.yaml'
-        config_content = f"""
-path: {temp_dataset}
+        config_content = f"""path: {temp_dataset}
 train: images/train
 val: images/val
 
@@ -141,29 +142,23 @@ names: {class_names}
         with open(config_path, 'w', encoding='utf-8') as f:
             f.write(config_content)
         
+        self.status_updated.emit("正在训练模型...")
         trainer = ModelTrainer(model_save_path=model_save / 'best.pt')
-        
-        for epoch in range(epochs):
-            self.progress_updated.emit(50 + int((epoch + 1) / epochs * 50))
-        
         model_path = trainer.train_with_yolo(config_path, epochs=epochs)
         
         self.finished.emit([model_path])
     
-    def _copy_and_label(self, img_path, cat_idx, img_dir, lbl_dir, categories):
+    def _copy_and_label(self, img_path, cat_idx, img_dir, lbl_dir):
         import cv2
-        import numpy as np
         
         img = cv2.imread(str(img_path))
         if img is None:
             return
         
-        h, w = img.shape[:2]
-        
-        new_img_path = img_dir / f"{img_path.stem}.jpg"
+        new_img_path = img_dir / f"{img_path.stem}_{cat_idx}.jpg"
         cv2.imwrite(str(new_img_path), img)
         
-        lbl_path = lbl_dir / f"{img_path.stem}.txt"
+        lbl_path = lbl_dir / f"{img_path.stem}_{cat_idx}.txt"
         with open(lbl_path, 'w') as f:
             f.write(f"{cat_idx} 0.5 0.5 1.0 1.0\n")
 
