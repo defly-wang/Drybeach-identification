@@ -418,6 +418,7 @@ class VideoExtractThread(QThread):
 
 class VideoExtractWidget(QWidget):
     thumbnail_clicked = pyqtSignal(str)
+    status_updated = pyqtSignal(str)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -636,7 +637,7 @@ class VideoExtractWidget(QWidget):
         item.setToolTip(f"帧号: {frame_num}")
         self.list_thumbnails.addItem(item)
         
-        self.statusBar().showMessage(f"已提取 {len(self.extracted_frames)} 帧")
+        self.status_updated.emit(f"已提取 {len(self.extracted_frames)} 帧")
     
     def on_thumbnail_clicked(self, item):
         row = self.list_thumbnails.row(item)
@@ -647,12 +648,12 @@ class VideoExtractWidget(QWidget):
     
     def on_extraction_complete(self, saved_paths: List[Path]):
         self.btn_extract.setEnabled(True)
-        self.statusBar().showMessage(f"提取完成! 已保存 {len(saved_paths)} 帧到 {self.save_dir}")
+        self.status_updated.emit(f"提取完成! 已保存 {len(saved_paths)} 帧到 {self.save_dir}")
         QMessageBox.information(self, "完成", f"已提取 {len(saved_paths)} 帧\n保存至: {self.save_dir}")
     
     def on_error(self, error_msg: str):
         self.btn_extract.setEnabled(True)
-        self.statusBar().showMessage(f"错误: {error_msg}")
+        self.status_updated.emit(f"错误: {error_msg}")
         QMessageBox.critical(self, "错误", error_msg)
 
 
@@ -738,6 +739,7 @@ class DryBeachGUI(QMainWindow if PYQT_AVAILABLE else object):
         
         self.video_extract_widget = VideoExtractWidget()
         self.video_extract_widget.thumbnail_clicked.connect(self.load_image_from_path)
+        self.video_extract_widget.status_updated.connect(self.statusBar().showMessage)
         self.tabs.addTab(self.video_extract_widget, "视频提取")
         
         detection_tab = self._create_detection_tab()
