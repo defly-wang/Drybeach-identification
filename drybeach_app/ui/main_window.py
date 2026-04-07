@@ -292,7 +292,12 @@ class DryBeachGUI(QMainWindow):
             self.image_viewer.set_mode('draw')
             self.image_viewer.current_category = 'detection_region'
             self.image_viewer.polygon_points = []
+            self.image_viewer._detection_region_completed = self._on_detection_region_completed
             self.statusBar().showMessage("请绘制识别区域（双击完成绘制）")
+    
+    def _on_detection_region_completed(self, region_data):
+        self.detection_tab.set_detection_region(region_data)
+        self.statusBar().showMessage("识别区域已绘制完成")
     
     def on_region_cleared(self):
         self.image_viewer.set_mode('normal')

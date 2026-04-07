@@ -266,6 +266,9 @@ class ImageViewer(QLabel):
                 }
                 self.mode = 'normal'
                 self._update_display()
+                
+                if hasattr(self, '_detection_region_completed'):
+                    self._detection_region_completed.emit(self.detection_region)
     
     def mouseMoveEvent(self, event):
         if self.current_pixmap is None:

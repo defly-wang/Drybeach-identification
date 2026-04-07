@@ -176,11 +176,14 @@ class DetectionTab(QWidget):
     def save_region(self):
         from PyQt6.QtWidgets import QMessageBox
         
-        region_data = None
-        if self.detection_region is not None:
-            region_data = self.detection_region
+        region_data = self.detection_region
+        print(f"save_region: detection_region = {region_data}")
         
         if region_data is None:
+            QMessageBox.warning(self, "警告", "没有可保存的区域")
+            return
+        
+        if not isinstance(region_data, dict) or 'points' not in region_data:
             QMessageBox.warning(self, "警告", "没有可保存的区域")
             return
         
