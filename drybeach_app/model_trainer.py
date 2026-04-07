@@ -201,7 +201,10 @@ class ModelTrainer:
     
     def train_with_yolo(self, data_yaml: Path, epochs: int = 100,
                        batch_size: int = 16, model_size: str = 'yolov8n',
-                       image_size: int = 32) -> str:
+                       image_size: int = 32, learning_rate: float = 0.001,
+                       optimizer: str = 'Adam', patience: int = 50,
+                       momentum: float = 0.9, weight_decay: float = 0.0001,
+                       warmup_epochs: float = 1.0, lrf: float = 0.01) -> str:
         if not ULTRALYTICS_AVAILABLE:
             raise RuntimeError("Ultralytics library not available")
         
@@ -227,7 +230,7 @@ class ModelTrainer:
             project=str(self.model_save_path.parent) if self.model_save_path else 'runs',
             name=self.model_save_path.stem if self.model_save_path else 'train',
             exist_ok=True,
-            patience=50,
+            patience=patience,
             save=True,
             plots=False,
             amp=False,
@@ -235,12 +238,12 @@ class ModelTrainer:
             cache=False,
             verbose=False,
             deterministic=True,
-            optimizer='Adam',
-            lr0=0.001,
-            lrf=0.01,
-            momentum=0.9,
-            weight_decay=0.0001,
-            warmup_epochs=1.0,
+            optimizer=optimizer,
+            lr0=learning_rate,
+            lrf=lrf,
+            momentum=momentum,
+            weight_decay=weight_decay,
+            warmup_epochs=warmup_epochs,
             warmup_momentum=0.8,
             box=0.05,
             cls=0.5,

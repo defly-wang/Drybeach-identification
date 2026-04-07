@@ -1,7 +1,8 @@
 from pathlib import Path
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-                             QLabel, QFileDialog, QSpinBox, QProgressBar, QMessageBox)
+                             QLabel, QFileDialog, QSpinBox, QProgressBar, QMessageBox,
+                             QDoubleSpinBox, QComboBox, QGroupBox, QGridLayout)
 from PyQt6.QtCore import pyqtSignal
 
 
@@ -25,13 +26,80 @@ class TrainingTab(QWidget):
         self.lbl_data_path.setStyleSheet("color: #666;")
         layout.addWidget(self.lbl_data_path)
         
-        epochs_layout = QHBoxLayout()
-        epochs_layout.addWidget(QLabel("训练轮数:"))
+        self.param_group = QGroupBox("训练参数 (点击展开)")
+        self.param_group.setCheckable(True)
+        self.param_group.setChecked(False)
+        param_layout = QGridLayout()
+        
+        param_layout.addWidget(QLabel("训练轮数:"), 0, 0)
         self.spin_epochs = QSpinBox()
         self.spin_epochs.setRange(1, 1000)
         self.spin_epochs.setValue(100)
-        epochs_layout.addWidget(self.spin_epochs)
-        layout.addLayout(epochs_layout)
+        param_layout.addWidget(self.spin_epochs, 0, 1)
+        
+        param_layout.addWidget(QLabel("批量大小:"), 0, 2)
+        self.spin_batch = QSpinBox()
+        self.spin_batch.setRange(1, 128)
+        self.spin_batch.setValue(16)
+        param_layout.addWidget(self.spin_batch, 0, 3)
+        
+        param_layout.addWidget(QLabel("图像尺寸:"), 1, 0)
+        self.spin_imgsz = QSpinBox()
+        self.spin_imgsz.setRange(16, 1024)
+        self.spin_imgsz.setValue(32)
+        self.spin_imgsz.setSingleStep(16)
+        param_layout.addWidget(self.spin_imgsz, 1, 1)
+        
+        param_layout.addWidget(QLabel("学习率:"), 1, 2)
+        self.spin_lr = QDoubleSpinBox()
+        self.spin_lr.setRange(0.0001, 0.1)
+        self.spin_lr.setValue(0.001)
+        self.spin_lr.setDecimals(4)
+        self.spin_lr.setSingleStep(0.0001)
+        param_layout.addWidget(self.spin_lr, 1, 3)
+        
+        param_layout.addWidget(QLabel("优化器:"), 2, 0)
+        self.cmb_optimizer = QComboBox()
+        self.cmb_optimizer.addItems(["Adam", "SGD", "AdamW"])
+        self.cmb_optimizer.setCurrentText("Adam")
+        param_layout.addWidget(self.cmb_optimizer, 2, 1)
+        
+        param_layout.addWidget(QLabel("早停轮数:"), 2, 2)
+        self.spin_patience = QSpinBox()
+        self.spin_patience.setRange(0, 200)
+        self.spin_patience.setValue(50)
+        param_layout.addWidget(self.spin_patience, 2, 3)
+        
+        param_layout.addWidget(QLabel("动量:"), 3, 0)
+        self.spin_momentum = QDoubleSpinBox()
+        self.spin_momentum.setRange(0.0, 0.99)
+        self.spin_momentum.setValue(0.9)
+        self.spin_momentum.setDecimals(2)
+        param_layout.addWidget(self.spin_momentum, 3, 1)
+        
+        param_layout.addWidget(QLabel("权重衰减:"), 3, 2)
+        self.spin_weight_decay = QDoubleSpinBox()
+        self.spin_weight_decay.setRange(0.0, 0.01)
+        self.spin_weight_decay.setValue(0.0001)
+        self.spin_weight_decay.setDecimals(5)
+        param_layout.addWidget(self.spin_weight_decay, 3, 3)
+        
+        param_layout.addWidget(QLabel("预热轮数:"), 4, 0)
+        self.spin_warmup = QDoubleSpinBox()
+        self.spin_warmup.setRange(0.0, 10.0)
+        self.spin_warmup.setValue(1.0)
+        self.spin_warmup.setDecimals(1)
+        param_layout.addWidget(self.spin_warmup, 4, 1)
+        
+        param_layout.addWidget(QLabel("最终LR比例:"), 4, 2)
+        self.spin_lrf = QDoubleSpinBox()
+        self.spin_lrf.setRange(0.01, 1.0)
+        self.spin_lrf.setValue(0.01)
+        self.spin_lrf.setDecimals(2)
+        param_layout.addWidget(self.spin_lrf, 4, 3)
+        
+        self.param_group.setLayout(param_layout)
+        layout.addWidget(self.param_group)
         
         self.btn_start_train = QPushButton("开始训练")
         self.btn_start_train.clicked.connect(self.start_training)
@@ -100,6 +168,15 @@ class TrainingTab(QWidget):
         self.training_requested.emit({
             'data_path': self.training_data_path,
             'epochs': self.spin_epochs.value(),
+            'batch_size': self.spin_batch.value(),
+            'image_size': self.spin_imgsz.value(),
+            'learning_rate': self.spin_lr.value(),
+            'optimizer': self.cmb_optimizer.currentText(),
+            'patience': self.spin_patience.value(),
+            'momentum': self.spin_momentum.value(),
+            'weight_decay': self.spin_weight_decay.value(),
+            'warmup_epochs': self.spin_warmup.value(),
+            'lrf': self.spin_lrf.value(),
             'model_save': Path(model_save_dir)
         })
     
