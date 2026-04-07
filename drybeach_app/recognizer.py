@@ -197,7 +197,7 @@ class DryBeachRecognizer:
     def _create_annotated_image(self, image: np.ndarray) -> np.ndarray:
         result = image.copy()
         
-        point_radius = 5
+        point_radius = 1
         
         for point in self.result.detection_points:
             x = point['x']
@@ -205,26 +205,25 @@ class DryBeachRecognizer:
             class_id = point['class_id']
             confidence = point['confidence']
             
+            if confidence < 0.7:
+                continue
+            
             color = self.CATEGORY_COLORS.get(class_id, (255, 255, 255))
             
-            cv2.circle(result, (x, y), point_radius, color, -1)
+            alpha = 0.7 + confidence * 0.25
+            alpha = min(1.0, max(0.0, alpha))
             
-            cv2.circle(result, (x, y), point_radius + 2, (255, 255, 255), 1)
-        
-        h, w = result.shape[:2]
-        legend_x, legend_y = 10, 10
-        line_height = 25
-        
-        cv2.rectangle(result, (legend_x - 5, legend_y - 5), 
-                     (legend_x + 180, legend_y + len(self.CATEGORY_NAMES) * line_height + 5), 
-                     (0, 0, 0), -1)
-        
-        for i, (name, color) in enumerate(zip(self.CATEGORY_NAMES, 
-                                             [self.CATEGORY_COLORS[i] for i in range(4)])):
-            count = self.result.class_counts.get(name, 0)
-            text = f"{name}: {count}"
-            cv2.putText(result, text, (legend_x, legend_y + i * line_height + 15),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            center_x = max(0, x - point_radius)
+            center_y = max(0, y - point_radius)
+            center_x2 = min(result.shape[1], x + point_radius)
+            center_y2 = min(result.shape[0], y + point_radius)
+            
+            if center_y2 > center_y and center_x2 > center_x:
+                roi = result[center_y:center_y2, center_x:center_x2].copy()
+                if roi.size > 0:
+                    blended = cv2.addWeighted(roi, 1 - alpha, 
+                                             np.full_like(roi, color), alpha, 0)
+                    result[center_y:center_y2, center_x:center_x2] = blended
         
         return result
     

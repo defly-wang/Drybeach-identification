@@ -31,6 +31,10 @@ class ImageViewer(QLabel):
         self.offset_x = 0
         self.offset_y = 0
         self.displayed_size = QSize()
+        
+        self._zoom_factor = 1.0
+        self._min_zoom = 0.1
+        self._max_zoom = 10.0
     
     def set_mode(self, mode: str):
         self.mode = mode
@@ -56,14 +60,22 @@ class ImageViewer(QLabel):
         pixmap = QPixmap.fromImage(qt_image)
         self.current_pixmap = pixmap
         
-        scaled_pixmap = pixmap.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio, 
-                                      Qt.TransformationMode.SmoothTransformation)
+        self._update_display()
+        
+        self.current_image = image
+    
+    def _update_display(self):
+        if self.current_pixmap is None:
+            return
+        
+        scaled_size = self.current_pixmap.size() * self._zoom_factor
+        scaled_pixmap = self.current_pixmap.scaled(
+            scaled_size, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
         self.displayed_size = scaled_pixmap.size()
         
-        self.offset_x = (self.size().width() - self.displayed_size.width()) // 2
-        self.offset_y = (self.size().height() - self.displayed_size.height()) // 2
-        
-        self.scale_factor = w / self.displayed_size.width() if self.displayed_size.width() > 0 else 1.0
+        self.setFixedSize(self.displayed_size)
         
         overlay = self._create_overlay()
         if overlay:
@@ -72,7 +84,19 @@ class ImageViewer(QLabel):
             painter.end()
         
         self.setPixmap(scaled_pixmap)
-        self.current_image = image
+    
+    def wheelEvent(self, event):
+        if self.current_pixmap is None:
+            return
+        
+        delta = event.angleDelta().y()
+        if delta > 0:
+            self._zoom_factor *= 1.1
+        else:
+            self._zoom_factor /= 1.1
+        
+        self._zoom_factor = max(self._min_zoom, min(self._max_zoom, self._zoom_factor))
+        self._update_display()
     
     def _create_overlay(self) -> Optional[QPixmap]:
         if self.displayed_size.isEmpty():

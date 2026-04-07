@@ -273,6 +273,7 @@ class DryBeachGUI(QMainWindow):
             
             self.image_viewer.set_image(annotated)
             self.detection_tab.on_detection_complete(annotated, result.class_counts)
+            
             self.statusBar().showMessage("识别完成")
             
         except Exception as e:
