@@ -174,7 +174,6 @@ names: {class_names}
             momentum=momentum,
             weight_decay=weight_decay,
             patience=patience if patience > 0 else 15,
-            image_size=image_size,
             dropout=dropout,
             lr_decay=lr_decay
         )
