@@ -337,6 +337,7 @@ class ImageViewer(QLabel):
 
 class MarkImageViewer(QWidget):
     region_drawn = pyqtSignal(str, tuple)
+    mouse_moved = pyqtSignal(int, int)
     
     def __init__(self):
         super().__init__()
@@ -538,12 +539,20 @@ class MarkImageViewer(QWidget):
         
         pos = event.position().toPoint()
         
-        if self.mode == 'draw' and self.current_category and self.polygon_points:
-            if 0 <= pos.x() < self.displayed_size.width() and 0 <= pos.y() < self.displayed_size.height():
+        if 0 <= pos.x() < self.displayed_size.width() and 0 <= pos.y() < self.displayed_size.height():
+            scale_x = self.current_pixmap.width() / self.displayed_size.width() if self.displayed_size.width() > 0 else 1.0
+            scale_y = self.current_pixmap.height() / self.displayed_size.height() if self.displayed_size.height() > 0 else 1.0
+            img_x = int(pos.x() * scale_x)
+            img_y = int(pos.y() * scale_y)
+            self.mouse_moved.emit(img_x, img_y)
+            
+            if self.mode == 'draw' and self.current_category and self.polygon_points:
                 self._mouse_pos = (pos.x(), pos.y())
             else:
                 self._mouse_pos = None
             self._update_display()
+        else:
+            self._mouse_pos = None
     
     def _canvas_mouse_release(self, event):
         if event.button() == Qt.MouseButton.RightButton:

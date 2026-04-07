@@ -60,6 +60,7 @@ class DryBeachGUI(QMainWindow):
         main_layout.addWidget(left_panel, 1)
         
         self.mark_tab.set_image_viewer(self.mark_viewer)
+        self.mark_viewer.mouse_moved.connect(self.on_mark_mouse_moved)
         
         self.statusBar().showMessage("就绪")
     
@@ -241,6 +242,9 @@ class DryBeachGUI(QMainWindow):
     
     def on_model_loaded(self, model_path: str):
         self.statusBar().showMessage(f"已加载模型: {Path(model_path).name}")
+    
+    def on_mark_mouse_moved(self, x: int, y: int):
+        self.statusBar().showMessage(f"坐标: ({x}, {y})")
     
     def on_detection_image_loaded(self, image_path: str):
         self.current_image_path = Path(image_path)
