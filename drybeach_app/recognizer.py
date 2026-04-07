@@ -226,13 +226,8 @@ class DryBeachRecognizer:
             
             color = self.CATEGORY_COLORS.get(class_id, (255, 255, 255))
             
-            alpha = 0.85 + confidence * 0.15
-            alpha = min(1.0, max(0.0, alpha))
-            
             if 0 <= x < result.shape[1] and 0 <= y < result.shape[0]:
-                result[y, x, 0] = int(result[y, x, 0] * (1 - alpha) + color[0] * alpha)
-                result[y, x, 1] = int(result[y, x, 1] * (1 - alpha) + color[1] * alpha)
-                result[y, x, 2] = int(result[y, x, 2] * (1 - alpha) + color[2] * alpha)
+                cv2.circle(result, (x, y), 8, color, -1)
         
         return result
     
