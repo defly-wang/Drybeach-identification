@@ -80,6 +80,8 @@ class ProcessingThread(QThread):
     
     def _process_training(self):
         from drybeach_app.model_trainer import ModelTrainer
+        import cv2
+        import random
         
         data_path = self.params['data_path']
         epochs = self.params['epochs']
@@ -98,13 +100,22 @@ class ProcessingThread(QThread):
             d.mkdir(parents=True, exist_ok=True)
         
         all_images = []
+        sample_img_h, sample_img_w = None, None
         for cat_idx, cat in enumerate(categories):
             cat_dir = data_path / cat
             if cat_dir.exists():
                 for img_file in cat_dir.glob('*.jpg'):
                     all_images.append((img_file, cat_idx))
+                    if sample_img_h is None:
+                        sample_img = cv2.imread(str(img_file))
+                        if sample_img is not None:
+                            sample_img_h, sample_img_w = sample_img.shape[:2]
                 for img_file in cat_dir.glob('*.png'):
                     all_images.append((img_file, cat_idx))
+                    if sample_img_h is None:
+                        sample_img = cv2.imread(str(img_file))
+                        if sample_img is not None:
+                            sample_img_h, sample_img_w = sample_img.shape[:2]
         
         if not all_images:
             raise ValueError("未找到任何训练图片")
@@ -141,7 +152,116 @@ names: {class_names}
         
         self.status_updated.emit("正在训练模型...")
         trainer = ModelTrainer(model_save_path=model_save / 'best.pt')
-        model_path = trainer.train_with_yolo(config_path, epochs=epochs)
+        
+        import random
+        random.shuffle(all_images)
+        
+        train_data = []
+        for img_path, cat_idx in all_images:
+            train_data.append((str(img_path), cat_idx))
+        
+        categories = ['water', 'beach', 'boundary', 'dam']
+        
+        train_images = []
+        train_labels = []
+        val_images = []
+        val_labels = []
+        
+        for img_path, cat_idx in train_data:
+            img = cv2.imread(img_path)
+            if img is None:
+                continue
+            
+            if random.random() < 0.8:
+                train_images.append(img_path)
+                train_labels.append(cat_idx)
+            else:
+                val_images.append(img_path)
+                val_labels.append(cat_idx)
+        
+        if not train_images:
+            raise ValueError("No training images found")
+        
+        from drybeach_app.model_trainer import ClassificationDataset
+        from torch.utils.data import DataLoader
+        import torch
+        
+        image_size = sample_img_w if sample_img_w else 32
+        
+        train_dataset = ClassificationDataset(train_images, train_labels, image_size)
+        val_dataset = ClassificationDataset(val_images, val_labels, image_size)
+        
+        train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+        val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+        
+        from drybeach_app.model_trainer import SimpleCNNClassifier
+        
+        num_classes = len(categories)
+        model = SimpleCNNClassifier(num_classes=num_classes, input_size=image_size)
+        
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        model.to(device)
+        
+        import torch.nn as nn
+        import torch.optim as optim
+        
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
+        
+        total = epochs
+        best_val_acc = 0.0
+        
+        for epoch in range(epochs):
+            model.train()
+            train_loss = 0.0
+            train_correct = 0
+            train_total = 0
+            
+            for batch_idx, (images, labels) in enumerate(train_loader):
+                images = images.to(device)
+                labels = labels.to(device)
+                
+                optimizer.zero_grad()
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
+                
+                train_loss += loss.item()
+                _, predicted = outputs.max(1)
+                train_total += labels.size(0)
+                train_correct += predicted.eq(labels).sum().item()
+            
+            train_acc = train_correct / train_total
+            
+            model.eval()
+            val_loss = 0.0
+            val_correct = 0
+            val_total = 0
+            
+            with torch.no_grad():
+                for images, labels in val_loader:
+                    images = images.to(device)
+                    labels = labels.to(device)
+                    
+                    outputs = model(images)
+                    loss = criterion(outputs, labels)
+                    
+                    val_loss += loss.item()
+                    _, predicted = outputs.max(1)
+                    val_total += labels.size(0)
+                    val_correct += predicted.eq(labels).sum().item()
+            
+            val_acc = val_correct / val_total if val_total > 0 else 0
+            scheduler.step(val_loss)
+            
+            self.progress_updated.emit(int((epoch + 1) / total * 100))
+        
+        if model_save / 'best.pt':
+            torch.save(model.state_dict(), model_save / 'best.pt')
+        
+        self.finished.emit([str(model_save / 'best.pt')])
         
         self.finished.emit([model_path])
     

@@ -65,6 +65,37 @@ class DryBeachDataset(Dataset):
         label = self._load_label(label_path, w, h)
         
         return image, label
+
+
+class ClassificationDataset(Dataset):
+    def __init__(self, image_paths: List[str], labels: List[int], image_size: int = 32):
+        self.image_paths = image_paths
+        self.labels = labels
+        self.image_size = image_size
+    
+    def __len__(self) -> int:
+        return len(self.image_paths)
+    
+    def __getitem__(self, idx: int):
+        if not TORCH_AVAILABLE:
+            raise RuntimeError("PyTorch not available")
+        
+        img_path = self.image_paths[idx]
+        image = cv2.imread(img_path)
+        
+        if image is None:
+            image = np.zeros((self.image_size, self.image_size, 3), dtype=np.uint8)
+        else:
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            image = cv2.resize(image, (self.image_size, self.image_size))
+        
+        image = image.astype(np.float32) / 255.0
+        image = np.transpose(image, (2, 0, 1))
+        image = torch.from_numpy(image)
+        
+        label = torch.tensor(self.labels[idx], dtype=torch.long)
+        
+        return image, label
     
     def _load_label(self, label_path: Path, img_w: int, img_h: int):
         if not TORCH_AVAILABLE:
@@ -86,44 +117,41 @@ class DryBeachDataset(Dataset):
         return torch.tensor(labels, dtype=torch.float32)
 
 
-class SimpleDetectionModel(nn.Module):
-    def __init__(self, num_classes: int = 2, input_size: Tuple[int, int] = (640, 640)):
+class SimpleCNNClassifier(nn.Module):
+    def __init__(self, num_classes: int = 4, input_size: int = 32):
         super().__init__()
         
-        self.backbone = nn.Sequential(
+        self.features = nn.Sequential(
             nn.Conv2d(3, 32, 3, padding=1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.MaxPool2d(2),
+            
             nn.Conv2d(32, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.MaxPool2d(2),
+            
             nn.Conv2d(64, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU(),
             nn.MaxPool2d(2),
+            
             nn.Conv2d(128, 256, 3, padding=1),
+            nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.MaxPool2d(2),
+            nn.AdaptiveAvgPool2d((1, 1)),
         )
         
-        self.pool = nn.AdaptiveAvgPool2d((7, 7))
-        
-        self.head = nn.Sequential(
+        self.classifier = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(256 * 7 * 7, 512),
-            nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, num_classes * 5)
+            nn.Linear(256, num_classes)
         )
-        
-        self.num_classes = num_classes
     
     def forward(self, x):
-        x = self.backbone(x)
-        x = self.pool(x)
-        x = self.head(x)
-        x = x.view(-1, self.num_classes, 5)
+        x = self.features(x)
+        x = self.classifier(x)
         return x
 
 
@@ -166,11 +194,12 @@ class ModelTrainer:
             logger.info(f"{prefix} GPU Memory: Allocated={allocated:.2f}GB, Reserved={reserved:.2f}GB")
     
     def train_with_yolo(self, data_yaml: Path, epochs: int = 100,
-                       batch_size: int = 16, model_size: str = 'yolov8n') -> str:
+                       batch_size: int = 16, model_size: str = 'yolov8n',
+                       image_size: int = 32) -> str:
         if not ULTRALYTICS_AVAILABLE:
             raise RuntimeError("Ultralytics library not available")
         
-        logger.info("Loading YOLO model...")
+        logger.info(f"Loading YOLO model {model_size} for {image_size}x{image_size} images...")
         self._log_gpu_memory("After model load")
         
         model = YOLO(f'{model_size}.pt')
@@ -179,22 +208,53 @@ class ModelTrainer:
         
         logger.info(f"Starting training on device: {'GPU' if device == 0 else 'CPU'}")
         
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            self._log_gpu_memory("After cache clear")
+        
         results = model.train(
             data=str(data_yaml),
             epochs=epochs,
             batch=batch_size,
-            imgsz=640,
+            imgsz=image_size,
             device=device,
             project=str(self.model_save_path.parent) if self.model_save_path else 'runs',
             name=self.model_save_path.stem if self.model_save_path else 'train',
             exist_ok=True,
-            patience=20,
+            patience=50,
             save=True,
-            plots=True,
-            amp=True,
-            workers=4,
-            cache=True
+            plots=False,
+            amp=False,
+            workers=0,
+            cache=False,
+            verbose=False,
+            deterministic=True,
+            optimizer='Adam',
+            lr0=0.001,
+            lrf=0.01,
+            momentum=0.9,
+            weight_decay=0.0001,
+            warmup_epochs=1.0,
+            warmup_momentum=0.8,
+            box=0.05,
+            cls=0.5,
+            dfl=0.5,
+            hsv_h=0.0,
+            hsv_s=0.0,
+            hsv_v=0.0,
+            degrees=0.0,
+            translate=0.0,
+            scale=0.0,
+            shear=0.0,
+            flipud=0.0,
+            fliplr=0.0,
+            mosaic=0.0,
+            mixup=0.0,
+            copy_paste=0.0
         )
+        
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
         self._log_gpu_memory("After training")
         
@@ -204,16 +264,126 @@ class ModelTrainer:
         
         return str(best_model_path)
     
-    def train_simple_model(self, train_dataset: Dataset,
-                          val_dataset: Optional[Dataset] = None,
-                          epochs: int = 50,
-                          lr: float = 0.001,
-                          batch_size: int = 16) -> Dict:
+    def train_classification_model(self, data_path: Path, epochs: int = 100,
+                                   batch_size: int = 32, lr: float = 0.001) -> str:
         if not TORCH_AVAILABLE:
             raise RuntimeError("PyTorch not available")
         
-        self.model = SimpleDetectionModel()
+        logger.info(f"Training classification model on {data_path}")
+        
+        categories = ['water', 'beach', 'boundary', 'dam']
+        num_classes = len(categories)
+        
+        image_size = 32
+        
+        train_images = []
+        train_labels = []
+        val_images = []
+        val_labels = []
+        
+        for cat_idx, cat in enumerate(categories):
+            cat_dir = data_path / cat
+            if not cat_dir.exists():
+                continue
+            
+            images = list(cat_dir.glob('*.jpg')) + list(cat_dir.glob('*.png'))
+            import random
+            random.shuffle(images)
+            
+            split_idx = int(len(images) * 0.8)
+            train_imgs = images[:split_idx]
+            val_imgs = images[split_idx:]
+            
+            for img_path in train_imgs:
+                train_images.append(str(img_path))
+                train_labels.append(cat_idx)
+            
+            for img_path in val_imgs:
+                val_images.append(str(img_path))
+                val_labels.append(cat_idx)
+        
+        if not train_images:
+            raise ValueError("No training images found")
+        
+        logger.info(f"Train: {len(train_images)}, Val: {len(val_images)}")
+        
+        train_dataset = ClassificationDataset(train_images, train_labels, image_size)
+        val_dataset = ClassificationDataset(val_images, val_labels, image_size)
+        
+        train_loader = DataLoader(
+            train_dataset, batch_size=batch_size, shuffle=True,
+            num_workers=0, pin_memory=torch.cuda.is_available()
+        )
+        val_loader = DataLoader(
+            val_dataset, batch_size=batch_size, shuffle=False,
+            num_workers=0, pin_memory=torch.cuda.is_available()
+        )
+        
+        self.model = SimpleCNNClassifier(num_classes=num_classes, input_size=image_size)
         self.model.to(self.device)
+        
+        criterion = nn.CrossEntropyLoss()
+        optimizer = optim.Adam(self.model.parameters(), lr=lr, weight_decay=1e-4)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
+        
+        best_val_acc = 0.0
+        
+        for epoch in range(epochs):
+            self.model.train()
+            train_loss = 0.0
+            train_correct = 0
+            train_total = 0
+            
+            for images, labels in train_loader:
+                images = images.to(self.device)
+                labels = labels.to(self.device)
+                
+                optimizer.zero_grad()
+                outputs = self.model(images)
+                loss = criterion(outputs, labels)
+                loss.backward()
+                optimizer.step()
+                
+                train_loss += loss.item()
+                _, predicted = outputs.max(1)
+                train_total += labels.size(0)
+                train_correct += predicted.eq(labels).sum().item()
+            
+            train_acc = train_correct / train_total
+            
+            self.model.eval()
+            val_loss = 0.0
+            val_correct = 0
+            val_total = 0
+            
+            with torch.no_grad():
+                for images, labels in val_loader:
+                    images = images.to(self.device)
+                    labels = labels.to(self.device)
+                    
+                    outputs = self.model(images)
+                    loss = criterion(outputs, labels)
+                    
+                    val_loss += loss.item()
+                    _, predicted = outputs.max(1)
+                    val_total += labels.size(0)
+                    val_correct += predicted.eq(labels).sum().item()
+            
+            val_acc = val_correct / val_total
+            scheduler.step(val_loss)
+            
+            logger.info(f"Epoch {epoch+1}/{epochs} - "
+                       f"Train Loss: {train_loss/len(train_loader):.4f}, Acc: {train_acc:.4f} - "
+                       f"Val Loss: {val_loss/len(val_loader):.4f}, Acc: {val_acc:.4f}")
+            
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                if self.model_save_path:
+                    torch.save(self.model.state_dict(), self.model_save_path)
+        
+        logger.info(f"Training completed. Best val accuracy: {best_val_acc:.4f}")
+        
+        return str(self.model_save_path)
         
         num_workers = 4 if torch.cuda.is_available() else 0
         train_loader = DataLoader(
