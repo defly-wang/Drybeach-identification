@@ -4,7 +4,7 @@ from typing import Optional, Tuple
 
 from PyQt6.QtWidgets import QLabel, QSizePolicy, QWidget, QScrollArea, QVBoxLayout
 from PyQt6.QtCore import Qt, pyqtSignal, QSize
-from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPoint
 
 
 class ImageViewer(QLabel):
