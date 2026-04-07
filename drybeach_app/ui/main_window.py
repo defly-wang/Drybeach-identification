@@ -133,7 +133,7 @@ class DryBeachGUI(QMainWindow):
         tab = DetectionTab()
         tab.model_loaded.connect(self.on_model_loaded)
         tab.detection_requested.connect(self.on_detection_requested)
-        tab.image_loaded.connect(self.on_detection_image_loaded)
+        tab.image_display_requested.connect(self.on_detection_image_loaded)
         return tab
     
     def _create_calibration_tab(self) -> CalibrationTab:
@@ -244,32 +244,41 @@ class DryBeachGUI(QMainWindow):
         self.current_image = cv2.imread(image_path)
         if self.current_image is not None:
             h, w = self.current_image.shape[:2]
+            self.image_viewer.set_image(self.current_image)
             self.statusBar().showMessage(f"已加载: {self.current_image_path.name} ({w}x{h})")
     
     def on_detection_requested(self, params: dict):
+        from drybeach_app.recognizer import DryBeachRecognizer
+        from PyQt6.QtWidgets import QMessageBox
+        
+        if not self.current_image_path:
+            QMessageBox.warning(self, "警告", "请先打开图片")
+            return
+        
         self.detection_tab.detect_progress.setVisible(True)
         self.detection_tab.detect_progress.setValue(0)
         self.detection_tab.btn_run_detection.setEnabled(False)
         self.statusBar().showMessage("正在识别...")
         
-        image_paths = [self.current_image_path] if self.current_image_path else []
-        
-        if not image_paths:
-            QMessageBox.warning(self, "警告", "请先打开图片")
-            return
-        
-        self.processing_thread = ProcessingThread('detection', {
-            'image_paths': image_paths,
-            'model_path': params['model_path'],
-            'patch_size': params['patch_size'],
-            'stride': params['stride']
-        })
-        
-        self.processing_thread.progress_updated.connect(self.detection_tab.set_progress)
-        self.processing_thread.finished.connect(self.on_detection_complete)
-        self.processing_thread.error_occurred.connect(self.on_error)
-        
-        self.processing_thread.start()
+        try:
+            recognizer = DryBeachRecognizer(model_path=params['model_path'])
+            recognizer.patch_size = params['patch_size']
+            recognizer.stride = params['stride']
+            
+            image = cv2.imread(params['image_path'])
+            result, annotated = recognizer.detect_and_visualize(
+                image, 
+                progress_callback=self.detection_tab.set_progress
+            )
+            
+            self.image_viewer.set_image(annotated)
+            self.detection_tab.on_detection_complete(annotated, result.class_counts)
+            self.statusBar().showMessage("识别完成")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"识别失败: {str(e)}")
+            self.detection_tab.set_progress(0)
+            self.detection_tab.btn_run_detection.setEnabled(True)
     
     def on_detection_complete(self, results: list):
         self.statusBar().showMessage(f"识别完成: {len(results)} 张图片")

@@ -175,17 +175,23 @@ class ModelTrainer:
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.enabled = True
             
-            self.use_amp = True
-            self.scaler = GradScaler()
+            if int(cuda_version.split('.')[0]) >= 11:
+                self.use_amp = True
+                self.scaler = GradScaler()
+                logger.info("AMP (Automatic Mixed Precision) enabled for CUDA 11+")
+            else:
+                logger.warning(f"CUDA {cuda_version} detected. AMP may have limited support.")
+                self.use_amp = False
             
             gpu_name = torch.cuda.get_device_name(0)
             gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
             logger.info(f"GPU: {gpu_name}, Total Memory: {gpu_memory:.1f}GB")
-            logger.info("Mixed precision training (AMP) enabled")
             self._log_gpu_memory("Initial")
         else:
             self.device = torch.device('cpu')
             logger.info("CUDA not available, using CPU")
+            logger.info("To enable GPU training, please install PyTorch with CUDA support:")
+            logger.info("  pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118")
     
     def _log_gpu_memory(self, prefix: str = ""):
         if torch.cuda.is_available():

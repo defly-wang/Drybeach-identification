@@ -262,8 +262,6 @@ names: {class_names}
             torch.save(model.state_dict(), model_save / 'best.pt')
         
         self.finished.emit([str(model_save / 'best.pt')])
-        
-        self.finished.emit([model_path])
     
     def _copy_and_label(self, img_path, cat_idx, img_dir, lbl_dir):
         import cv2
