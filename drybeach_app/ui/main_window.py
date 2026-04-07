@@ -134,6 +134,9 @@ class DryBeachGUI(QMainWindow):
         tab.model_loaded.connect(self.on_model_loaded)
         tab.detection_requested.connect(self.on_detection_requested)
         tab.image_display_requested.connect(self.on_detection_image_loaded)
+        tab.draw_region_requested.connect(self.on_draw_region_requested)
+        tab.region_cleared.connect(self.on_region_cleared)
+        tab.region_loaded.connect(self.on_region_loaded)
         return tab
     
     def _create_calibration_tab(self) -> CalibrationTab:
@@ -264,6 +267,7 @@ class DryBeachGUI(QMainWindow):
             recognizer = DryBeachRecognizer(model_path=params['model_path'])
             recognizer.patch_size = params['patch_size']
             recognizer.stride = params['stride']
+            recognizer.detection_region = params.get('detection_region')
             
             image = cv2.imread(params['image_path'])
             result, annotated = recognizer.detect_and_visualize(
@@ -280,6 +284,25 @@ class DryBeachGUI(QMainWindow):
             QMessageBox.critical(self, "错误", f"识别失败: {str(e)}")
             self.detection_tab.set_progress(0)
             self.detection_tab.btn_run_detection.setEnabled(True)
+    
+    def on_draw_region_requested(self, image_path: str):
+        self.current_image_path = Path(image_path)
+        self.current_image = cv2.imread(image_path)
+        if self.current_image is not None:
+            self.image_viewer.set_mode('draw')
+            self.image_viewer.current_category = 'detection_region'
+            self.image_viewer.polygon_points = []
+            self.statusBar().showMessage("请绘制识别区域（双击完成绘制）")
+    
+    def on_region_cleared(self):
+        self.image_viewer.set_mode('normal')
+        self.statusBar().showMessage("识别区域已清除")
+    
+    def on_region_loaded(self, region_data):
+        if self.current_image is not None:
+            self.detection_tab.set_detection_region(region_data)
+            self.image_viewer.set_detection_region(region_data)
+            self.statusBar().showMessage("识别区域已加载")
     
     def on_detection_complete(self, results: list):
         self.statusBar().showMessage(f"识别完成: {len(results)} 张图片")

@@ -17,6 +17,7 @@ class DetectionTab(QWidget):
         super().__init__(parent)
         self.model_path = None
         self.model_info = None
+        self.detection_region = None
         self.init_ui()
     
     def init_ui(self):
@@ -44,6 +45,30 @@ class DetectionTab(QWidget):
         self.lbl_image_path.setStyleSheet("color: #666;")
         layout.addWidget(self.lbl_image_path)
         
+        region_layout = QHBoxLayout()
+        self.btn_draw_region = QPushButton("画识别区域")
+        self.btn_draw_region.clicked.connect(self.draw_detection_region)
+        region_layout.addWidget(self.btn_draw_region)
+        
+        self.btn_clear_region = QPushButton("清除区域")
+        self.btn_clear_region.clicked.connect(self.clear_detection_region)
+        region_layout.addWidget(self.btn_clear_region)
+        layout.addLayout(region_layout)
+        
+        self.lbl_region = QLabel("未设置识别区域")
+        self.lbl_region.setStyleSheet("color: #888; font-size: 11px;")
+        layout.addWidget(self.lbl_region)
+        
+        save_load_layout = QHBoxLayout()
+        self.btn_save_region = QPushButton("保存区域")
+        self.btn_save_region.clicked.connect(self.save_region)
+        save_load_layout.addWidget(self.btn_save_region)
+        
+        self.btn_load_region = QPushButton("导入区域")
+        self.btn_load_region.clicked.connect(self.load_region)
+        save_load_layout.addWidget(self.btn_load_region)
+        layout.addLayout(save_load_layout)
+        
         param_layout = QHBoxLayout()
         param_layout.addWidget(QLabel("切片尺寸:"))
         self.cmb_detect_patch = QComboBox()
@@ -70,6 +95,11 @@ class DetectionTab(QWidget):
         self.lbl_detect_result = QLabel("")
         self.lbl_detect_result.setStyleSheet("color: #888; font-size: 11px;")
         layout.addWidget(self.lbl_detect_result)
+        
+        self.btn_save_result = QPushButton("保存识别结果")
+        self.btn_save_result.clicked.connect(self.save_result)
+        self.btn_save_result.setEnabled(False)
+        layout.addWidget(self.btn_save_result)
         
         layout.addStretch()
         self.setLayout(layout)
@@ -130,6 +160,64 @@ class DetectionTab(QWidget):
                 if self.model_path:
                     self.btn_run_detection.setEnabled(True)
     
+    def draw_detection_region(self):
+        if not hasattr(self, 'image_path') or not self.image_path:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "警告", "请先打开图片")
+            return
+        
+        self.draw_region_requested.emit(str(self.image_path))
+    
+    def clear_detection_region(self):
+        self.detection_region = None
+        self.lbl_region.setText("未设置识别区域")
+        self.region_cleared.emit()
+    
+    def save_region(self):
+        if self.detection_region is None:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "警告", "没有可保存的区域")
+            return
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "保存区域", "", "JSON Files (*.json)"
+        )
+        
+        if file_path:
+            import json
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(self.detection_region, f, ensure_ascii=False, indent=2)
+            
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "完成", f"区域已保存至: {file_path}")
+    
+    def load_region(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择区域文件", "", "JSON Files (*.json)"
+        )
+        
+        if file_path:
+            import json
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    self.detection_region = json.load(f)
+                
+                if self.detection_region and 'points' in self.detection_region:
+                    self.lbl_region.setText(f"已加载区域: {len(self.detection_region['points'])}个点")
+                    self.region_loaded.emit(self.detection_region)
+                else:
+                    from PyQt6.QtWidgets import QMessageBox
+                    QMessageBox.warning(self, "警告", "区域文件格式错误")
+                    
+            except Exception as e:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.critical(self, "错误", f"导入失败: {str(e)}")
+    
+    def set_detection_region(self, region_data):
+        self.detection_region = region_data
+        if region_data and 'points' in region_data:
+            self.lbl_region.setText(f"识别区域: {len(region_data['points'])}个点")
+    
     def run_detection(self):
         from PyQt6.QtWidgets import QMessageBox
         
@@ -149,7 +237,8 @@ class DetectionTab(QWidget):
             'model_path': str(self.model_path),
             'image_path': str(self.image_path),
             'patch_size': int(self.cmb_detect_patch.currentText()),
-            'stride': self.spin_detect_stride.value()
+            'stride': self.spin_detect_stride.value(),
+            'detection_region': self.detection_region
         })
     
     def on_detection_complete(self, annotated_image, class_counts):
@@ -160,10 +249,29 @@ class DetectionTab(QWidget):
             self.annotated_image = annotated_image
             count_text = " | ".join([f"{k}: {v}" for k, v in class_counts.items()])
             self.lbl_detect_result.setText(count_text)
+            self.btn_save_result.setEnabled(True)
             self.result_ready.emit(annotated_image)
+    
+    def save_result(self):
+        if not hasattr(self, 'annotated_image') or self.annotated_image is None:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "警告", "没有可保存的识别结果")
+            return
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "保存识别结果", "", "JPEG Files (*.jpg)"
+        )
+        
+        if file_path:
+            cv2.imwrite(file_path, self.annotated_image)
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "完成", f"结果已保存至: {file_path}")
     
     def set_progress(self, value):
         self.detect_progress.setValue(value)
     
     image_loaded = pyqtSignal(str)
     result_ready = pyqtSignal(object)
+    draw_region_requested = pyqtSignal(str)
+    region_cleared = pyqtSignal()
+    region_loaded = pyqtSignal(object)

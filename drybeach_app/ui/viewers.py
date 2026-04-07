@@ -27,6 +27,9 @@ class ImageViewer(QLabel):
         self.calibration_points = []
         self.roi_rect = None
         
+        self.detection_region = None
+        self.detection_region_polygon = []
+        
         self.scale_factor = 1.0
         self.offset_x = 0
         self.offset_y = 0
@@ -42,7 +45,36 @@ class ImageViewer(QLabel):
         self.roi_rect = None
         self.drag_start = None
         self.drag_end = None
+        if mode != 'draw':
+            self.detection_region_polygon = []
         self.update_overlay()
+    
+    def set_detection_region(self, region_data):
+        if region_data and 'points' in region_data:
+            self.detection_region_polygon = [(float(p['x']), float(p['y'])) for p in region_data['points']]
+            self.detection_region = region_data
+            self._update_display()
+    
+    def _update_display(self):
+        if self.current_pixmap is None:
+            return
+        
+        scaled_size = self.current_pixmap.size() * self._zoom_factor
+        scaled_pixmap = self.current_pixmap.scaled(
+            scaled_size, Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+        self.displayed_size = scaled_pixmap.size()
+        
+        self.setFixedSize(self.displayed_size)
+        
+        overlay = self._create_overlay()
+        if overlay:
+            painter = QPainter(scaled_pixmap)
+            painter.drawPixmap(0, 0, overlay)
+            painter.end()
+        
+        self.setPixmap(scaled_pixmap)
     
     def set_image(self, image: np.ndarray):
         if image is None:
@@ -142,6 +174,20 @@ class ImageViewer(QLabel):
                 painter.setPen(QPen(Qt.GlobalColor.white, 1))
                 painter.drawText(mid_x + 5, mid_y - 5, f"{dist}px")
         
+        if hasattr(self, 'detection_region_polygon') and self.detection_region_polygon:
+            painter.setPen(QPen(Qt.GlobalColor.cyan, 2))
+            for i in range(len(self.detection_region_polygon)):
+                p1 = self.detection_region_polygon[i]
+                p2 = self.detection_region_polygon[(i + 1) % len(self.detection_region_polygon)]
+                painter.drawLine(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
+            
+            if self.detection_region:
+                color = QColor(0, 255, 255, 50)
+                painter.setBrush(color)
+                painter.setPen(QPen(Qt.GlobalColor.cyan, 1))
+                polygon = [QPoint(int(p[0]), int(p[1])) for p in self.detection_region_polygon]
+                painter.drawPolygon(polygon)
+        
         painter.end()
         return overlay
     
@@ -192,6 +238,23 @@ class ImageViewer(QLabel):
                         event.position().x(), event.position().y()
                     )
                     self.calibration_point_clicked.emit((img_x, img_y))
+            elif self.mode == 'draw' and self.current_category == 'detection_region':
+                if not hasattr(self, 'detection_region_polygon'):
+                    self.detection_region_polygon = []
+                self.detection_region_polygon.append((
+                    event.position().x(),
+                    event.position().y()
+                ))
+                self.update()
+    
+    def mouseDoubleClickEvent(self, event):
+        if self.mode == 'draw' and self.current_category == 'detection_region':
+            if len(self.detection_region_polygon) >= 3:
+                self.detection_region = {
+                    'points': [{'x': x, 'y': y} for x, y in self.detection_region_polygon]
+                }
+                self.mode = 'normal'
+                self.update()
     
     def mouseMoveEvent(self, event):
         if self.current_pixmap is None or self.mode != 'roi':

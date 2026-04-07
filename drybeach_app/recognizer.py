@@ -77,6 +77,7 @@ class DryBeachRecognizer:
         self.device = None
         self.patch_size = 32
         self.stride = 16
+        self.detection_region = None
         self.result = DetectionResult()
         self.model_info = {}
         
@@ -130,19 +131,36 @@ class DryBeachRecognizer:
         class_counts = {name: 0 for name in self.CATEGORY_NAMES}
         detection_points = []
         
+        region_mask = None
+        if self.detection_region and 'points' in self.detection_region:
+            region_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+            points = np.array([[int(p['x']), int(p['y'])] for p in self.detection_region['points']], dtype=np.int32)
+            cv2.fillPoly(region_mask, [points], 1)
+        
         total_patches = 0
         for y in range(0, img_h - self.patch_size + 1, self.stride):
             for x in range(0, img_w - self.patch_size + 1, self.stride):
+                if region_mask is not None:
+                    patch_mask = region_mask[y:y+self.patch_size, x:x+self.patch_size]
+                    if np.sum(patch_mask) < (self.patch_size * self.patch_size * 0.3):
+                        continue
                 total_patches += 1
         
         processed = 0
         print(f"\n{'='*50}")
         print(f"开始识别: 图像尺寸 {img_w}x{img_h}, 切片尺寸 {self.patch_size}, 步长 {self.stride}")
         print(f"总切片数: {total_patches}")
+        if self.detection_region:
+            print(f"识别区域: 已设置")
         print(f"{'='*50}")
         
         for y in range(0, img_h - self.patch_size + 1, self.stride):
             for x in range(0, img_w - self.patch_size + 1, self.stride):
+                if region_mask is not None:
+                    patch_mask = region_mask[y:y+self.patch_size, x:x+self.patch_size]
+                    if np.sum(patch_mask) < (self.patch_size * self.patch_size * 0.3):
+                        continue
+                
                 patch = image[y:y+self.patch_size, x:x+self.patch_size]
                 patch_rgb = cv2.cvtColor(patch, cv2.COLOR_BGR2RGB)
                 patch_float = patch_rgb.astype(np.float32) / 255.0
@@ -197,8 +215,6 @@ class DryBeachRecognizer:
     def _create_annotated_image(self, image: np.ndarray) -> np.ndarray:
         result = image.copy()
         
-        point_radius = 1
-        
         for point in self.result.detection_points:
             x = point['x']
             y = point['y']
@@ -210,20 +226,13 @@ class DryBeachRecognizer:
             
             color = self.CATEGORY_COLORS.get(class_id, (255, 255, 255))
             
-            alpha = 0.7 + confidence * 0.25
+            alpha = 0.85 + confidence * 0.15
             alpha = min(1.0, max(0.0, alpha))
             
-            center_x = max(0, x - point_radius)
-            center_y = max(0, y - point_radius)
-            center_x2 = min(result.shape[1], x + point_radius)
-            center_y2 = min(result.shape[0], y + point_radius)
-            
-            if center_y2 > center_y and center_x2 > center_x:
-                roi = result[center_y:center_y2, center_x:center_x2].copy()
-                if roi.size > 0:
-                    blended = cv2.addWeighted(roi, 1 - alpha, 
-                                             np.full_like(roi, color), alpha, 0)
-                    result[center_y:center_y2, center_x:center_x2] = blended
+            if 0 <= x < result.shape[1] and 0 <= y < result.shape[0]:
+                result[y, x, 0] = int(result[y, x, 0] * (1 - alpha) + color[0] * alpha)
+                result[y, x, 1] = int(result[y, x, 1] * (1 - alpha) + color[1] * alpha)
+                result[y, x, 2] = int(result[y, x, 2] * (1 - alpha) + color[2] * alpha)
         
         return result
     
