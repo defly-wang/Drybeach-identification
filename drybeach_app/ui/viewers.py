@@ -3,8 +3,8 @@ import numpy as np
 from typing import Optional, Tuple
 
 from PyQt6.QtWidgets import QLabel, QSizePolicy, QWidget, QScrollArea, QVBoxLayout
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
-from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QPoint
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPoint
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
 
 
 class ImageViewer(QLabel):
