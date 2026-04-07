@@ -176,10 +176,20 @@ class ImageViewer(QLabel):
         
         if hasattr(self, 'detection_region_polygon') and self.detection_region_polygon:
             painter.setPen(QPen(Qt.GlobalColor.cyan, 2))
+            
+            for pt in self.detection_region_polygon:
+                painter.drawEllipse(int(pt[0]) - 3, int(pt[1]) - 3, 6, 6)
+            
             for i in range(len(self.detection_region_polygon)):
                 p1 = self.detection_region_polygon[i]
                 p2 = self.detection_region_polygon[(i + 1) % len(self.detection_region_polygon)]
                 painter.drawLine(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
+            
+            if hasattr(self, '_mouse_preview_pos'):
+                last_pt = self.detection_region_polygon[-1]
+                preview_pt = self._mouse_preview_pos
+                painter.setPen(QPen(Qt.GlobalColor.yellow, 1))
+                painter.drawLine(int(last_pt[0]), int(last_pt[1]), int(preview_pt[0]), int(preview_pt[1]))
             
             if self.detection_region:
                 color = QColor(0, 255, 255, 50)
@@ -241,11 +251,12 @@ class ImageViewer(QLabel):
             elif self.mode == 'draw' and self.current_category == 'detection_region':
                 if not hasattr(self, 'detection_region_polygon'):
                     self.detection_region_polygon = []
-                self.detection_region_polygon.append((
-                    event.position().x(),
-                    event.position().y()
-                ))
-                self.update()
+                
+                widget_x = event.position().x() - self.offset_x
+                widget_y = event.position().y() - self.offset_y
+                
+                self.detection_region_polygon.append((widget_x, widget_y))
+                self._update_display()
     
     def mouseDoubleClickEvent(self, event):
         if self.mode == 'draw' and self.current_category == 'detection_region':
@@ -254,15 +265,23 @@ class ImageViewer(QLabel):
                     'points': [{'x': x, 'y': y} for x, y in self.detection_region_polygon]
                 }
                 self.mode = 'normal'
-                self.update()
+                self._update_display()
     
     def mouseMoveEvent(self, event):
-        if self.current_pixmap is None or self.mode != 'roi':
+        if self.current_pixmap is None:
             return
         
-        if self.drag_start is not None:
-            self.drag_end = event.position().toPoint()
-            self.update_overlay()
+        if self.mode == 'roi':
+            if self.drag_start is not None:
+                self.drag_end = event.position().toPoint()
+                self.update_overlay()
+        elif self.mode == 'draw' and self.current_category == 'detection_region':
+            if hasattr(self, 'detection_region_polygon') and self.detection_region_polygon:
+                self._mouse_preview_pos = (
+                    event.position().x() - self.offset_x,
+                    event.position().y() - self.offset_y
+                )
+                self._update_display()
     
     def mouseReleaseEvent(self, event):
         if self.current_pixmap is None or self.mode != 'roi':

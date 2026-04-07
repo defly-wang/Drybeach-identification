@@ -174,8 +174,13 @@ class DetectionTab(QWidget):
         self.region_cleared.emit()
     
     def save_region(self):
-        if self.detection_region is None:
-            from PyQt6.QtWidgets import QMessageBox
+        from PyQt6.QtWidgets import QMessageBox
+        
+        region_data = None
+        if self.detection_region is not None:
+            region_data = self.detection_region
+        
+        if region_data is None:
             QMessageBox.warning(self, "警告", "没有可保存的区域")
             return
         
@@ -186,9 +191,8 @@ class DetectionTab(QWidget):
         if file_path:
             import json
             with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(self.detection_region, f, ensure_ascii=False, indent=2)
+                json.dump(region_data, f, ensure_ascii=False, indent=2)
             
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.information(self, "完成", f"区域已保存至: {file_path}")
     
     def load_region(self):
@@ -253,8 +257,9 @@ class DetectionTab(QWidget):
             self.result_ready.emit(annotated_image)
     
     def save_result(self):
+        from PyQt6.QtWidgets import QMessageBox
+        
         if not hasattr(self, 'annotated_image') or self.annotated_image is None:
-            from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "警告", "没有可保存的识别结果")
             return
         
@@ -263,9 +268,12 @@ class DetectionTab(QWidget):
         )
         
         if file_path:
-            cv2.imwrite(file_path, self.annotated_image)
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.information(self, "完成", f"结果已保存至: {file_path}")
+            try:
+                save_image = cv2.cvtColor(self.annotated_image, cv2.COLOR_RGB2BGR)
+                cv2.imwrite(file_path, save_image)
+                QMessageBox.information(self, "完成", f"结果已保存至: {file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"保存失败: {str(e)}")
     
     def set_progress(self, value):
         self.detect_progress.setValue(value)
