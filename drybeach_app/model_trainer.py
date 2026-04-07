@@ -118,33 +118,48 @@ class ClassificationDataset(Dataset):
 
 
 class SimpleCNNClassifier(nn.Module):
-    def __init__(self, num_classes: int = 4, input_size: int = 32):
+    def __init__(self, num_classes: int = 4, input_size: int = 64):
         super().__init__()
         
         self.features = nn.Sequential(
-            nn.Conv2d(3, 32, 3, padding=1),
-            nn.BatchNorm2d(32),
+            nn.Conv2d(3, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.MaxPool2d(2),
-            
-            nn.Conv2d(32, 64, 3, padding=1),
+            nn.Conv2d(64, 64, 3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.MaxPool2d(2),
+            nn.Dropout2d(0.25),
             
             nn.Conv2d(64, 128, 3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
+            nn.Conv2d(128, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
             nn.MaxPool2d(2),
+            nn.Dropout2d(0.25),
             
             nn.Conv2d(128, 256, 3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Conv2d(256, 256, 3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.25),
+            
+            nn.Conv2d(256, 512, 3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((2, 2)),
         )
         
         self.classifier = nn.Sequential(
             nn.Flatten(),
+            nn.Dropout(0.5),
+            nn.Linear(512 * 2 * 2, 256),
+            nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(256, num_classes)
         )
@@ -274,16 +289,18 @@ class ModelTrainer:
         return str(best_model_path)
     
     def train_classification_model(self, data_path: Path, epochs: int = 100,
-                                   batch_size: int = 32, lr: float = 0.001) -> str:
+                                   batch_size: int = 16, lr: float = 0.001,
+                                   optimizer_name: str = 'Adam',
+                                   momentum: float = 0.9, weight_decay: float = 0.0001,
+                                   patience: int = 10, image_size: int = 64) -> str:
         if not TORCH_AVAILABLE:
             raise RuntimeError("PyTorch not available")
         
         logger.info(f"Training classification model on {data_path}")
+        logger.info(f"Parameters: epochs={epochs}, batch_size={batch_size}, lr={lr}, optimizer={optimizer_name}")
         
         categories = ['water', 'beach', 'boundary', 'dam']
         num_classes = len(categories)
-        
-        image_size = 32
         
         train_images = []
         train_labels = []
@@ -332,10 +349,20 @@ class ModelTrainer:
         self.model.to(self.device)
         
         criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(self.model.parameters(), lr=lr, weight_decay=1e-4)
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=10)
+        
+        if optimizer_name == 'Adam':
+            optimizer = optim.Adam(self.model.parameters(), lr=lr, weight_decay=weight_decay)
+        elif optimizer_name == 'AdamW':
+            optimizer = optim.AdamW(self.model.parameters(), lr=lr, weight_decay=weight_decay)
+        elif optimizer_name == 'SGD':
+            optimizer = optim.SGD(self.model.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay)
+        else:
+            optimizer = optim.Adam(self.model.parameters(), lr=lr, weight_decay=weight_decay)
+        
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=patience)
         
         best_val_acc = 0.0
+        no_improve_count = 0
         
         for epoch in range(epochs):
             self.model.train()
@@ -378,7 +405,7 @@ class ModelTrainer:
                     val_total += labels.size(0)
                     val_correct += predicted.eq(labels).sum().item()
             
-            val_acc = val_correct / val_total
+            val_acc = val_correct / val_total if val_total > 0 else 0
             scheduler.step(val_loss)
             
             logger.info(f"Epoch {epoch+1}/{epochs} - "
@@ -387,16 +414,20 @@ class ModelTrainer:
             
             if val_acc > best_val_acc:
                 best_val_acc = val_acc
+                no_improve_count = 0
                 if self.model_save_path:
                     torch.save(self.model.state_dict(), self.model_save_path)
+                    logger.info(f"Saved best model with val_acc: {best_val_acc:.4f}")
+            else:
+                no_improve_count += 1
+            
+            if patience > 0 and no_improve_count >= patience:
+                logger.info(f"Early stopping at epoch {epoch+1}")
+                break
         
         logger.info(f"Training completed. Best val accuracy: {best_val_acc:.4f}")
         
-        return str(self.model_save_path)
-        
-        num_workers = 4 if torch.cuda.is_available() else 0
-        train_loader = DataLoader(
-            train_dataset, 
+        return str(self.model_save_path) 
             batch_size=batch_size, 
             shuffle=True,
             num_workers=num_workers,

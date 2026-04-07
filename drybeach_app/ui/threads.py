@@ -158,21 +158,19 @@ names: {class_names}
         with open(config_path, 'w', encoding='utf-8') as f:
             f.write(config_content)
         
-        self.status_updated.emit("正在训练模型...")
+        self.status_updated.emit("正在训练分类模型...")
         trainer = ModelTrainer(model_save_path=model_save / 'best.pt')
         
-        model_path = trainer.train_with_yolo(
-            data_yaml=config_path,
+        model_path = trainer.train_classification_model(
+            data_path=data_path,
             epochs=epochs,
             batch_size=batch_size,
-            image_size=image_size,
-            learning_rate=learning_rate,
-            optimizer=optimizer,
-            patience=patience,
+            lr=learning_rate,
+            optimizer_name=optimizer,
             momentum=momentum,
             weight_decay=weight_decay,
-            warmup_epochs=warmup_epochs,
-            lrf=lrf
+            patience=patience if patience > 0 else 10,
+            image_size=image_size
         )
         
         self.finished.emit([model_path])
