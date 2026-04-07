@@ -161,16 +161,22 @@ names: {class_names}
         self.status_updated.emit("正在训练分类模型...")
         trainer = ModelTrainer(model_save_path=model_save / 'best.pt')
         
+        dropout = self.params.get('dropout', 0.5)
+        lr_decay = self.params.get('lr_decay', 0.5)
+        
         model_path = trainer.train_classification_model(
             data_path=data_path,
             epochs=epochs,
             batch_size=batch_size,
+            image_size=image_size,
             lr=learning_rate,
             optimizer_name=optimizer,
             momentum=momentum,
             weight_decay=weight_decay,
-            patience=patience if patience > 0 else 10,
-            image_size=image_size
+            patience=patience if patience > 0 else 15,
+            image_size=image_size,
+            dropout=dropout,
+            lr_decay=lr_decay
         )
         
         self.finished.emit([model_path])

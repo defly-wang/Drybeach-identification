@@ -33,8 +33,8 @@ class TrainingTab(QWidget):
         
         param_layout.addWidget(QLabel("训练轮数:"), 0, 0)
         self.spin_epochs = QSpinBox()
-        self.spin_epochs.setRange(1, 1000)
-        self.spin_epochs.setValue(100)
+        self.spin_epochs.setRange(1, 500)
+        self.spin_epochs.setValue(50)
         param_layout.addWidget(self.spin_epochs, 0, 1)
         
         param_layout.addWidget(QLabel("批量大小:"), 0, 2)
@@ -45,9 +45,9 @@ class TrainingTab(QWidget):
         
         param_layout.addWidget(QLabel("图像尺寸:"), 1, 0)
         self.spin_imgsz = QSpinBox()
-        self.spin_imgsz.setRange(16, 1024)
-        self.spin_imgsz.setValue(32)
-        self.spin_imgsz.setSingleStep(16)
+        self.spin_imgsz.setRange(32, 512)
+        self.spin_imgsz.setValue(64)
+        self.spin_imgsz.setSingleStep(32)
         param_layout.addWidget(self.spin_imgsz, 1, 1)
         
         param_layout.addWidget(QLabel("学习率:"), 1, 2)
@@ -66,8 +66,8 @@ class TrainingTab(QWidget):
         
         param_layout.addWidget(QLabel("早停轮数:"), 2, 2)
         self.spin_patience = QSpinBox()
-        self.spin_patience.setRange(0, 200)
-        self.spin_patience.setValue(50)
+        self.spin_patience.setRange(0, 50)
+        self.spin_patience.setValue(15)
         param_layout.addWidget(self.spin_patience, 2, 3)
         
         param_layout.addWidget(QLabel("动量:"), 3, 0)
@@ -84,19 +84,20 @@ class TrainingTab(QWidget):
         self.spin_weight_decay.setDecimals(5)
         param_layout.addWidget(self.spin_weight_decay, 3, 3)
         
-        param_layout.addWidget(QLabel("预热轮数:"), 4, 0)
-        self.spin_warmup = QDoubleSpinBox()
-        self.spin_warmup.setRange(0.0, 10.0)
-        self.spin_warmup.setValue(1.0)
-        self.spin_warmup.setDecimals(1)
-        param_layout.addWidget(self.spin_warmup, 4, 1)
+        param_layout.addWidget(QLabel("Dropout:"), 4, 0)
+        self.spin_dropout = QDoubleSpinBox()
+        self.spin_dropout.setRange(0.0, 0.8)
+        self.spin_dropout.setValue(0.5)
+        self.spin_dropout.setDecimals(2)
+        self.spin_dropout.setSingleStep(0.05)
+        param_layout.addWidget(self.spin_dropout, 4, 1)
         
-        param_layout.addWidget(QLabel("最终LR比例:"), 4, 2)
-        self.spin_lrf = QDoubleSpinBox()
-        self.spin_lrf.setRange(0.01, 1.0)
-        self.spin_lrf.setValue(0.01)
-        self.spin_lrf.setDecimals(2)
-        param_layout.addWidget(self.spin_lrf, 4, 3)
+        param_layout.addWidget(QLabel("LR衰减:"), 4, 2)
+        self.spin_lr_decay = QDoubleSpinBox()
+        self.spin_lr_decay.setRange(0.1, 0.99)
+        self.spin_lr_decay.setValue(0.5)
+        self.spin_lr_decay.setDecimals(2)
+        param_layout.addWidget(self.spin_lr_decay, 4, 3)
         
         self.param_group.setLayout(param_layout)
         layout.addWidget(self.param_group)
@@ -175,8 +176,8 @@ class TrainingTab(QWidget):
             'patience': self.spin_patience.value(),
             'momentum': self.spin_momentum.value(),
             'weight_decay': self.spin_weight_decay.value(),
-            'warmup_epochs': self.spin_warmup.value(),
-            'lrf': self.spin_lrf.value(),
+            'dropout': self.spin_dropout.value(),
+            'lr_decay': self.spin_lr_decay.value(),
             'model_save': Path(model_save_dir)
         })
     

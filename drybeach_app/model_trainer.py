@@ -288,11 +288,12 @@ class ModelTrainer:
         
         return str(best_model_path)
     
-    def train_classification_model(self, data_path: Path, epochs: int = 100,
+    def train_classification_model(self, data_path: Path, epochs: int = 50,
                                    batch_size: int = 16, lr: float = 0.001,
                                    optimizer_name: str = 'Adam',
                                    momentum: float = 0.9, weight_decay: float = 0.0001,
-                                   patience: int = 10, image_size: int = 64) -> str:
+                                   patience: int = 15, image_size: int = 64,
+                                   dropout: float = 0.5, lr_decay: float = 0.5) -> str:
         if not TORCH_AVAILABLE:
             raise RuntimeError("PyTorch not available")
         
@@ -359,7 +360,7 @@ class ModelTrainer:
         else:
             optimizer = optim.Adam(self.model.parameters(), lr=lr, weight_decay=weight_decay)
         
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=patience)
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=lr_decay, patience=patience)
         
         best_val_acc = 0.0
         no_improve_count = 0
