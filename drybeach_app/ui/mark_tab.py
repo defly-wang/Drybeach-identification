@@ -42,23 +42,34 @@ class SegmentationThread(QThread):
             
             total_steps = ((img_h - self.patch_size) // self.stride + 1) * ((img_w - self.patch_size) // self.stride + 1)
             current_step = 0
+            patch_area = self.patch_size * self.patch_size
             
             for y in range(0, img_h - self.patch_size + 1, self.stride):
                 for x in range(0, img_w - self.patch_size + 1, self.stride):
-                    center_x = x + self.patch_size // 2
-                    center_y = y + self.patch_size // 2
+                    patch_y1, patch_y2 = y, y + self.patch_size
+                    patch_x1, patch_x2 = x, x + self.patch_size
+                    
+                    best_category = None
+                    best_overlap = 0
                     
                     for category, mask in all_masks.items():
-                        if mask[center_y, center_x] > 0:
-                            safe_name = self.category_safe_names.get(category, category)
-                            category_dir = self.output_dir / safe_name
-                            category_dir.mkdir(parents=True, exist_ok=True)
-                            
-                            patch = self.img[y:y+self.patch_size, x:x+self.patch_size]
-                            output_file = category_dir / f"{self.original_name}_{y}_{x}.jpg"
-                            cv2.imwrite(str(output_file), patch)
-                            counts[category] += 1
-                            break
+                        patch_mask = mask[patch_y1:patch_y2, patch_x1:patch_x2]
+                        overlap_pixels = np.count_nonzero(patch_mask)
+                        overlap_ratio = overlap_pixels / patch_area
+                        
+                        if overlap_ratio > best_overlap:
+                            best_overlap = overlap_ratio
+                            best_category = category
+                    
+                    if best_category and best_overlap > 0.5:
+                        safe_name = self.category_safe_names.get(best_category, best_category)
+                        category_dir = self.output_dir / safe_name
+                        category_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        patch = self.img[patch_y1:patch_y2, patch_x1:patch_x2]
+                        output_file = category_dir / f"{self.original_name}_{y}_{x}.jpg"
+                        cv2.imwrite(str(output_file), patch)
+                        counts[best_category] += 1
                     
                     current_step += 1
                     self.progress.emit(current_step, total_steps)
@@ -97,6 +108,15 @@ class MarkSegmentationWidget(QWidget):
         self.btn_clear = QPushButton("清空")
         self.btn_clear.clicked.connect(self.clear_all)
         btn_layout.addWidget(self.btn_clear)
+        
+        self.btn_save_regions = QPushButton("保存区域")
+        self.btn_save_regions.clicked.connect(self.save_regions)
+        btn_layout.addWidget(self.btn_save_regions)
+        
+        self.btn_load_regions = QPushButton("导入区域")
+        self.btn_load_regions.clicked.connect(self.load_regions)
+        btn_layout.addWidget(self.btn_load_regions)
+        
         layout.addLayout(btn_layout)
         
         category_layout = QHBoxLayout()
@@ -203,6 +223,56 @@ class MarkSegmentationWidget(QWidget):
         for btn in self.category_buttons.values():
             btn.setChecked(False)
         self.lbl_info.setText("已清空所有标记")
+    
+    def save_regions(self):
+        if self._viewer is None:
+            QMessageBox.warning(self, "警告", "请先打开图片")
+            return
+        
+        regions = self._viewer.regions
+        has_regions = any(regions.values())
+        
+        if not has_regions:
+            QMessageBox.warning(self, "警告", "没有可保存的区域")
+            return
+        
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "保存区域", "", "JSON Files (*.json)"
+        )
+        
+        if file_path:
+            import json
+            with open(file_path, 'w', encoding='utf-8') as f:
+                json.dump(regions, f, ensure_ascii=False, indent=2)
+            QMessageBox.information(self, "完成", f"区域已保存至: {file_path}")
+    
+    def load_regions(self):
+        if self._viewer is None or self._viewer.current_image is None:
+            QMessageBox.warning(self, "警告", "请先打开图片")
+            return
+        
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择区域文件", "", "JSON Files (*.json)"
+        )
+        
+        if file_path:
+            import json
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    regions = json.load(f)
+                
+                valid_categories = {'水面', '摊面', '分界线', '坝体'}
+                for cat in valid_categories:
+                    if cat not in regions:
+                        regions[cat] = []
+                    elif not isinstance(regions[cat], list):
+                        regions[cat] = []
+                
+                self._viewer.regions = regions
+                self._viewer._update_display()
+                QMessageBox.information(self, "完成", "区域已导入")
+            except Exception as e:
+                QMessageBox.critical(self, "错误", f"导入失败: {str(e)}")
     
     def segment_image(self):
         if self._viewer is None or self._viewer.current_image is None:
