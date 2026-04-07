@@ -10,6 +10,7 @@ from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
 class ImageViewer(QLabel):
     roi_selected = pyqtSignal(tuple)
     calibration_point_clicked = pyqtSignal(tuple)
+    detection_region_completed = pyqtSignal(dict)
     
     def __init__(self):
         super().__init__()
@@ -177,25 +178,33 @@ class ImageViewer(QLabel):
         if hasattr(self, 'detection_region_polygon') and self.detection_region_polygon:
             painter.setPen(QPen(Qt.GlobalColor.cyan, 2))
             
+            zoom_scale = self._zoom_factor if hasattr(self, '_zoom_factor') else 1.0
+            
             for pt in self.detection_region_polygon:
-                painter.drawEllipse(int(pt[0]) - 3, int(pt[1]) - 3, 6, 6)
+                disp_x = pt[0] * zoom_scale
+                disp_y = pt[1] * zoom_scale
+                painter.drawEllipse(int(disp_x) - 3, int(disp_y) - 3, 6, 6)
             
             for i in range(len(self.detection_region_polygon)):
                 p1 = self.detection_region_polygon[i]
                 p2 = self.detection_region_polygon[(i + 1) % len(self.detection_region_polygon)]
-                painter.drawLine(int(p1[0]), int(p1[1]), int(p2[0]), int(p2[1]))
+                p1_disp = (p1[0] * zoom_scale, p1[1] * zoom_scale)
+                p2_disp = (p2[0] * zoom_scale, p2[1] * zoom_scale)
+                painter.drawLine(int(p1_disp[0]), int(p1_disp[1]), int(p2_disp[0]), int(p2_disp[1]))
             
             if hasattr(self, '_mouse_preview_pos'):
                 last_pt = self.detection_region_polygon[-1]
                 preview_pt = self._mouse_preview_pos
                 painter.setPen(QPen(Qt.GlobalColor.yellow, 1))
-                painter.drawLine(int(last_pt[0]), int(last_pt[1]), int(preview_pt[0]), int(preview_pt[1]))
+                preview_disp = (preview_pt[0] * zoom_scale, preview_pt[1] * zoom_scale)
+                last_disp = (last_pt[0] * zoom_scale, last_pt[1] * zoom_scale)
+                painter.drawLine(int(last_disp[0]), int(last_disp[1]), int(preview_disp[0]), int(preview_disp[1]))
             
             if self.detection_region:
                 color = QColor(0, 255, 255, 50)
                 painter.setBrush(color)
                 painter.setPen(QPen(Qt.GlobalColor.cyan, 1))
-                polygon = [QPoint(int(p[0]), int(p[1])) for p in self.detection_region_polygon]
+                polygon = [QPoint(int(p[0] * zoom_scale), int(p[1] * zoom_scale)) for p in self.detection_region_polygon]
                 painter.drawPolygon(polygon)
         
         painter.end()
@@ -252,10 +261,14 @@ class ImageViewer(QLabel):
                 if not hasattr(self, 'detection_region_polygon'):
                     self.detection_region_polygon = []
                 
-                widget_x = event.position().x() - self.offset_x
-                widget_y = event.position().y() - self.offset_y
+                widget_x = event.position().x()
+                widget_y = event.position().y()
                 
-                self.detection_region_polygon.append((widget_x, widget_y))
+                zoom_scale = self._zoom_factor if hasattr(self, '_zoom_factor') else 1.0
+                orig_x = (widget_x - self.offset_x) / zoom_scale
+                orig_y = (widget_y - self.offset_y) / zoom_scale
+                
+                self.detection_region_polygon.append((orig_x, orig_y))
                 self._update_display()
     
     def mouseDoubleClickEvent(self, event):
@@ -267,8 +280,7 @@ class ImageViewer(QLabel):
                 self.mode = 'normal'
                 self._update_display()
                 
-                if hasattr(self, '_detection_region_completed'):
-                    self._detection_region_completed.emit(self.detection_region)
+                self.detection_region_completed.emit(self.detection_region)
     
     def mouseMoveEvent(self, event):
         if self.current_pixmap is None:
@@ -280,10 +292,14 @@ class ImageViewer(QLabel):
                 self.update_overlay()
         elif self.mode == 'draw' and self.current_category == 'detection_region':
             if hasattr(self, 'detection_region_polygon') and self.detection_region_polygon:
-                self._mouse_preview_pos = (
-                    event.position().x() - self.offset_x,
-                    event.position().y() - self.offset_y
-                )
+                widget_x = event.position().x()
+                widget_y = event.position().y()
+                
+                zoom_scale = self._zoom_factor if hasattr(self, '_zoom_factor') else 1.0
+                orig_x = (widget_x - self.offset_x) / zoom_scale
+                orig_y = (widget_y - self.offset_y) / zoom_scale
+                
+                self._mouse_preview_pos = (orig_x, orig_y)
                 self._update_display()
     
     def mouseReleaseEvent(self, event):
