@@ -11,18 +11,20 @@ from .viewers import MarkImageViewer
 
 class SegmentationThread(QThread):
     progress = pyqtSignal(int, int)
-    finished = pyqtSignal(dict)
+    finished = pyqtSignal(dict, object)
     error = pyqtSignal(str)
     
-    def __init__(self, img, regions, output_dir, original_name, patch_size, stride, category_safe_names):
+    def __init__(self, img, regions, output_dir, original_name, patch_size, stride, category_safe_names, region_colors):
         super().__init__()
-        self.img = img
+        self._original_img = img
+        self.img = img.copy()
         self.regions = regions
         self.output_dir = output_dir
         self.original_name = original_name
         self.patch_size = patch_size
         self.stride = stride
         self.category_safe_names = category_safe_names
+        self.region_colors = region_colors
     
     def run(self):
         try:
@@ -44,6 +46,8 @@ class SegmentationThread(QThread):
             current_step = 0
             patch_area = self.patch_size * self.patch_size
             
+            display_img = self.img.copy()
+            
             for y in range(0, img_h - self.patch_size + 1, self.stride):
                 for x in range(0, img_w - self.patch_size + 1, self.stride):
                     patch_y1, patch_y2 = y, y + self.patch_size
@@ -61,20 +65,26 @@ class SegmentationThread(QThread):
                             best_overlap = overlap_ratio
                             best_category = category
                     
-                    if best_category and best_overlap > 0.5:
+                    if best_category and best_overlap > 0.1:
                         safe_name = self.category_safe_names.get(best_category, best_category)
                         category_dir = self.output_dir / safe_name
                         category_dir.mkdir(parents=True, exist_ok=True)
                         
-                        patch = self.img[patch_y1:patch_y2, patch_x1:patch_x2]
+                        patch = self._original_img[patch_y1:patch_y2, patch_x1:patch_x2]
+                        patch_bgr = cv2.cvtColor(patch, cv2.COLOR_RGB2BGR)
                         output_file = category_dir / f"{self.original_name}_{y}_{x}.jpg"
-                        cv2.imwrite(str(output_file), patch)
+                        cv2.imwrite(str(output_file), patch_bgr)
                         counts[best_category] += 1
+                        
+                        color = self.region_colors.get(best_category, (255, 255, 0))
+                        overlay_patch = display_img[patch_y1:patch_y2, patch_x1:patch_x2]
+                        color_filled = np.full((self.patch_size, self.patch_size, 3), color, dtype=np.uint8)
+                        cv2.addWeighted(color_filled, 0.3, overlay_patch, 0.7, 0, overlay_patch)
                     
                     current_step += 1
                     self.progress.emit(current_step, total_steps)
             
-            self.finished.emit(counts)
+            self.finished.emit(counts, display_img)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -198,6 +208,7 @@ class MarkSegmentationWidget(QWidget):
             
             if self.current_image is not None:
                 self.image_opened.emit(file_path)
+                self._viewer.set_image(self.current_image, Path(file_path).name)
                 self.btn_segment.setEnabled(True)
                 self.lbl_info.setText(f"已加载: {Path(file_path).name}")
     
@@ -308,7 +319,7 @@ class MarkSegmentationWidget(QWidget):
         self.btn_segment.setEnabled(False)
         
         self._segment_thread = SegmentationThread(
-            img, regions, output_dir, original_name, patch_size, stride, self.category_safe_names
+            img, regions, output_dir, original_name, patch_size, stride, self.category_safe_names, self._viewer.region_colors
         )
         self._segment_thread.progress.connect(self._on_segment_progress)
         self._segment_thread.finished.connect(self._on_segment_finished)
@@ -319,11 +330,17 @@ class MarkSegmentationWidget(QWidget):
         self.progress_bar.setValue(current)
         self.lbl_info.setText(f"正在分割图像... {current}/{total}")
     
-    def _on_segment_finished(self, counts):
+    def _on_segment_finished(self, counts, result_img):
         self.progress_bar.setVisible(False)
         self.btn_segment.setEnabled(True)
         total_saved = sum(counts.values())
         self.lbl_info.setText(f"已分割保存 {total_saved} 张图片: 水面{counts.get('水面',0)} 滩面{counts.get('摊面',0)} 分界线{counts.get('分界线',0)} 坝体{counts.get('坝体',0)}")
+        
+        if result_img is not None:
+            display_name = f"{Path(self.current_image_path).stem}_segmented.jpg"
+            self._viewer.set_image(result_img, display_name)
+            self._viewer.current_image = result_img
+        
         QMessageBox.information(self, "完成", f"已分割保存 {total_saved} 张图片")
     
     def _on_segment_error(self, error_msg):

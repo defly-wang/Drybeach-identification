@@ -217,6 +217,7 @@ class MarkImageViewer(QWidget):
         super().__init__()
         self.current_image = None
         self.current_pixmap = None
+        self.image_filename = None
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -258,7 +259,7 @@ class MarkImageViewer(QWidget):
         self.canvas.mouseReleaseEvent = self._canvas_mouse_release
         self.canvas.mouseDoubleClickEvent = self._canvas_double_click
     
-    def set_image(self, image: np.ndarray):
+    def set_image(self, image: np.ndarray, filename: str = None):
         if image is None:
             return
         
@@ -273,6 +274,7 @@ class MarkImageViewer(QWidget):
         qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
         self.current_pixmap = QPixmap.fromImage(qt_image)
         
+        self.image_filename = filename
         self._zoom_factor = 1.0
         self._update_display()
     
@@ -354,6 +356,14 @@ class MarkImageViewer(QWidget):
                 painter.setPen(QPen(qt_color, 2))
                 painter.setBrush(qt_color)
                 painter.drawEllipse(pt[0] - 5, pt[1] - 5, 10, 10)
+        
+        if self.image_filename:
+            painter.setPen(QPen(Qt.GlobalColor.white, 1))
+            font = painter.font()
+            font.setPointSize(12)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(10, 20, self.image_filename)
         
         painter.end()
         return overlay

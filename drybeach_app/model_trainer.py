@@ -9,6 +9,7 @@ try:
     import torch.nn as nn
     import torch.optim as optim
     from torch.utils.data import Dataset, DataLoader
+    from torch.cuda.amp import autocast, GradScaler
     TORCH_AVAILABLE = True
 except (ImportError, OSError) as e:
     TORCH_AVAILABLE = False
@@ -131,29 +132,71 @@ class ModelTrainer:
         self.model_save_path = model_save_path
         self.model = None
         self.device = None
+        self.use_amp = False
+        self.scaler = None
         if TORCH_AVAILABLE:
-            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            logger.info(f"Training on device: {self.device}")
+            self._setup_cuda()
+    
+    def _setup_cuda(self):
+        if torch.cuda.is_available():
+            cuda_version = torch.version.cuda
+            logger.info(f"CUDA version: {cuda_version}")
+            
+            self.device = torch.device('cuda')
+            
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.enabled = True
+            
+            self.use_amp = True
+            self.scaler = GradScaler()
+            
+            gpu_name = torch.cuda.get_device_name(0)
+            gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+            logger.info(f"GPU: {gpu_name}, Total Memory: {gpu_memory:.1f}GB")
+            logger.info("Mixed precision training (AMP) enabled")
+            self._log_gpu_memory("Initial")
+        else:
+            self.device = torch.device('cpu')
+            logger.info("CUDA not available, using CPU")
+    
+    def _log_gpu_memory(self, prefix: str = ""):
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated(0) / 1024**3
+            reserved = torch.cuda.memory_reserved(0) / 1024**3
+            logger.info(f"{prefix} GPU Memory: Allocated={allocated:.2f}GB, Reserved={reserved:.2f}GB")
     
     def train_with_yolo(self, data_yaml: Path, epochs: int = 100,
                        batch_size: int = 16, model_size: str = 'yolov8n') -> str:
         if not ULTRALYTICS_AVAILABLE:
             raise RuntimeError("Ultralytics library not available")
         
+        logger.info("Loading YOLO model...")
+        self._log_gpu_memory("After model load")
+        
         model = YOLO(f'{model_size}.pt')
+        
+        device = 0 if torch.cuda.is_available() else 'cpu'
+        
+        logger.info(f"Starting training on device: {'GPU' if device == 0 else 'CPU'}")
         
         results = model.train(
             data=str(data_yaml),
             epochs=epochs,
             batch=batch_size,
             imgsz=640,
+            device=device,
             project=str(self.model_save_path.parent) if self.model_save_path else 'runs',
             name=self.model_save_path.stem if self.model_save_path else 'train',
             exist_ok=True,
             patience=20,
             save=True,
-            plots=True
+            plots=True,
+            amp=True,
+            workers=4,
+            cache=True
         )
+        
+        self._log_gpu_memory("After training")
         
         best_model_path = results.save_dir / 'weights' / 'best.pt'
         
@@ -164,16 +207,27 @@ class ModelTrainer:
     def train_simple_model(self, train_dataset: Dataset,
                           val_dataset: Optional[Dataset] = None,
                           epochs: int = 50,
-                          lr: float = 0.001) -> Dict:
+                          lr: float = 0.001,
+                          batch_size: int = 16) -> Dict:
         if not TORCH_AVAILABLE:
             raise RuntimeError("PyTorch not available")
+        
         self.model = SimpleDetectionModel()
         self.model.to(self.device)
         
-        train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
+        num_workers = 4 if torch.cuda.is_available() else 0
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=batch_size, 
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=num_workers > 0
+        )
         
         criterion = nn.MSELoss()
         optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
         
         training_history = {'loss': [], 'val_loss': []}
         
@@ -182,24 +236,41 @@ class ModelTrainer:
             epoch_loss = 0.0
             
             for images, labels in train_loader:
-                images = images.to(self.device)
-                labels = labels.to(self.device)
+                images = images.to(self.device, non_blocking=True)
+                labels = labels.to(self.device, non_blocking=True)
                 
                 optimizer.zero_grad()
-                outputs = self.model(images)
-                loss = criterion(outputs, labels)
-                loss.backward()
-                optimizer.step()
+                
+                if self.use_amp:
+                    with autocast():
+                        outputs = self.model(images)
+                        loss = criterion(outputs, labels)
+                    
+                    self.scaler.scale(loss).backward()
+                    self.scaler.step(optimizer)
+                    self.scaler.update()
+                else:
+                    outputs = self.model(images)
+                    loss = criterion(outputs, labels)
+                    loss.backward()
+                    optimizer.step()
                 
                 epoch_loss += loss.item()
+            
+            scheduler.step()
             
             avg_loss = epoch_loss / len(train_loader)
             training_history['loss'].append(avg_loss)
             
-            logger.info(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
+            logger.info(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}, LR: {scheduler.get_last_lr()[0]:.6f}")
         
         if self.model_save_path and self.model:
-            torch.save(self.model.state_dict(), self.model_save_path)
+            torch.save({
+                'model_state_dict': self.model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
+                'epoch': epochs,
+            }, self.model_save_path)
             logger.info(f"Model saved to {self.model_save_path}")
         
         return training_history

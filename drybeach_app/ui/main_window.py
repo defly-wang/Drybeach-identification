@@ -170,7 +170,7 @@ class DryBeachGUI(QMainWindow):
         self.image_viewer.set_image(result_image)
     
     def on_mark_image_opened(self, image_path: str):
-        self.mark_viewer.set_image(cv2.imread(image_path))
+        self.mark_viewer.set_image(cv2.imread(image_path), Path(image_path).name)
         self.tabs.setCurrentIndex(2)
     
     def _create_center_panel(self) -> QWidget:
