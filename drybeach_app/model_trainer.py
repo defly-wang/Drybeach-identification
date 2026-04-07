@@ -427,63 +427,7 @@ class ModelTrainer:
         
         logger.info(f"Training completed. Best val accuracy: {best_val_acc:.4f}")
         
-        return str(self.model_save_path) 
-            batch_size=batch_size, 
-            shuffle=True,
-            num_workers=num_workers,
-            pin_memory=torch.cuda.is_available(),
-            persistent_workers=num_workers > 0
-        )
-        
-        criterion = nn.MSELoss()
-        optimizer = optim.Adam(self.model.parameters(), lr=lr)
-        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
-        
-        training_history = {'loss': [], 'val_loss': []}
-        
-        for epoch in range(epochs):
-            self.model.train()
-            epoch_loss = 0.0
-            
-            for images, labels in train_loader:
-                images = images.to(self.device, non_blocking=True)
-                labels = labels.to(self.device, non_blocking=True)
-                
-                optimizer.zero_grad()
-                
-                if self.use_amp:
-                    with autocast():
-                        outputs = self.model(images)
-                        loss = criterion(outputs, labels)
-                    
-                    self.scaler.scale(loss).backward()
-                    self.scaler.step(optimizer)
-                    self.scaler.update()
-                else:
-                    outputs = self.model(images)
-                    loss = criterion(outputs, labels)
-                    loss.backward()
-                    optimizer.step()
-                
-                epoch_loss += loss.item()
-            
-            scheduler.step()
-            
-            avg_loss = epoch_loss / len(train_loader)
-            training_history['loss'].append(avg_loss)
-            
-            logger.info(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}, LR: {scheduler.get_last_lr()[0]:.6f}")
-        
-        if self.model_save_path and self.model:
-            torch.save({
-                'model_state_dict': self.model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'scheduler_state_dict': scheduler.state_dict(),
-                'epoch': epochs,
-            }, self.model_save_path)
-            logger.info(f"Model saved to {self.model_save_path}")
-        
-        return training_history
+        return str(self.model_save_path)
     
     def convert_to_yolo_format(self, annotations: List[Dict],
                               output_dir: Path,
