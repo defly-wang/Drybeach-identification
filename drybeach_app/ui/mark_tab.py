@@ -65,7 +65,7 @@ class SegmentationThread(QThread):
                             best_overlap = overlap_ratio
                             best_category = category
                     
-                    if best_category and best_overlap > 0.3:
+                    if best_category and best_overlap > 0.5:
                         safe_name = self.category_safe_names.get(best_category, best_category)
                         category_dir = self.output_dir / safe_name
                         category_dir.mkdir(parents=True, exist_ok=True)
