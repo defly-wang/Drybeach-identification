@@ -293,7 +293,8 @@ class ModelTrainer:
                                    optimizer_name: str = 'Adam',
                                    momentum: float = 0.9, weight_decay: float = 0.0001,
                                    patience: int = 15, image_size: int = 64,
-                                   dropout: float = 0.5, lr_decay: float = 0.5) -> str:
+                                   dropout: float = 0.5, lr_decay: float = 0.5,
+                                   resume_model_path: str = None) -> str:
         if not TORCH_AVAILABLE:
             raise RuntimeError("PyTorch not available")
         
@@ -347,6 +348,19 @@ class ModelTrainer:
         )
         
         self.model = SimpleCNNClassifier(num_classes=num_classes, input_size=image_size)
+        
+        if resume_model_path and Path(resume_model_path).exists():
+            logger.info(f"Resuming from existing model: {resume_model_path}")
+            state_dict = torch.load(resume_model_path, map_location=self.device)
+            self.model.load_state_dict(state_dict)
+            if self.model_save_path:
+                temp_save = self.model_save_path.with_name('incremental_' + self.model_save_path.name)
+                self.model_save_path = temp_save
+        elif self.model_save_path and self.model_save_path.exists():
+            logger.info(f"Continuing from checkpoint: {self.model_save_path}")
+            state_dict = torch.load(self.model_save_path, map_location=self.device)
+            self.model.load_state_dict(state_dict)
+        
         self.model.to(self.device)
         
         criterion = nn.CrossEntropyLoss()

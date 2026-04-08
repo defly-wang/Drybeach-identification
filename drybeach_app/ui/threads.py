@@ -164,6 +164,7 @@ names: {class_names}
         
         dropout = self.params.get('dropout', 0.5)
         lr_decay = self.params.get('lr_decay', 0.5)
+        resume_model_path = self.params.get('resume_model_path')
         
         model_path = trainer.train_classification_model(
             data_path=data_path,
@@ -176,7 +177,8 @@ names: {class_names}
             weight_decay=weight_decay,
             patience=patience if patience > 0 else 15,
             dropout=dropout,
-            lr_decay=lr_decay
+            lr_decay=lr_decay,
+            resume_model_path=resume_model_path
         )
         
         self.finished.emit([model_path])

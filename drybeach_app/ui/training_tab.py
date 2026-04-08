@@ -13,6 +13,7 @@ class TrainingTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.training_data_path = None
+        self.resume_model_path = None
         self.init_ui()
     
     def init_ui(self):
@@ -25,6 +26,15 @@ class TrainingTab(QWidget):
         self.lbl_data_path = QLabel("未选择数据目录")
         self.lbl_data_path.setStyleSheet("color: #666;")
         layout.addWidget(self.lbl_data_path)
+        
+        model_layout = QHBoxLayout()
+        btn_select_model = QPushButton("选择续训模型(可选)")
+        btn_select_model.clicked.connect(self.select_resume_model)
+        model_layout.addWidget(btn_select_model)
+        self.lbl_resume_model = QLabel("从新模型开始训练")
+        self.lbl_resume_model.setStyleSheet("color: #888;")
+        model_layout.addWidget(self.lbl_resume_model)
+        layout.addLayout(model_layout)
         
         self.param_group = QGroupBox("训练参数 (点击展开)")
         self.param_group.setCheckable(True)
@@ -151,6 +161,16 @@ class TrainingTab(QWidget):
         )
         self.btn_start_train.setEnabled(True)
     
+    def select_resume_model(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "选择续训模型", "", "Model Files (*.pt)"
+        )
+        
+        if file_path:
+            self.resume_model_path = file_path
+            self.lbl_resume_model.setText(f"续训: {Path(file_path).name}")
+            self.lbl_resume_model.setStyleSheet("color: #080;")
+    
     def start_training(self):
         if not self.training_data_path:
             QMessageBox.warning(self, "警告", "请先选择数据目录")
@@ -178,7 +198,8 @@ class TrainingTab(QWidget):
             'weight_decay': self.spin_weight_decay.value(),
             'dropout': self.spin_dropout.value(),
             'lr_decay': self.spin_lr_decay.value(),
-            'model_save': Path(model_save_dir)
+            'model_save': Path(model_save_dir),
+            'resume_model_path': self.resume_model_path
         })
     
     def on_training_complete(self, model_path):
