@@ -343,9 +343,11 @@ class DryBeachRecognizer:
         
         return self.model_info
     
-    def detect(self, image: np.ndarray, progress_callback=None) -> DetectionResult:
+    def detect(self, image: np.ndarray, progress_callback=None, confidence_threshold: float = 0.0) -> DetectionResult:
         if self.model is None:
             raise RuntimeError("Model not loaded")
+        
+        self.confidence_threshold = confidence_threshold
         
         if len(image.shape) == 2:
             image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
@@ -424,6 +426,15 @@ class DryBeachRecognizer:
         self.result.class_counts = class_counts
         self.result.detection_points = detection_points
         
+        if hasattr(self, 'confidence_threshold') and self.confidence_threshold > 0:
+            self.result.detection_points = [
+                p for p in self.result.detection_points 
+                if p['confidence'] >= self.confidence_threshold
+            ]
+            for p in self.result.detection_points:
+                class_counts[self.CATEGORY_NAMES[p['class_id']]] += 1
+            self.result.class_counts = class_counts
+        
         self._generate_boundary_line()
         
         print(f"\n{'='*50}")
@@ -435,8 +446,9 @@ class DryBeachRecognizer:
         
         return self.result
     
-    def detect_and_visualize(self, image: np.ndarray, progress_callback=None, draw_boundary: bool = False) -> Tuple[DetectionResult, np.ndarray]:
-        self.detect(image, progress_callback=progress_callback)
+    def detect_and_visualize(self, image: np.ndarray, progress_callback=None, draw_boundary: bool = False,
+                           confidence_threshold: float = 0.0) -> Tuple[DetectionResult, np.ndarray]:
+        self.detect(image, progress_callback=progress_callback, confidence_threshold=confidence_threshold)
         
         annotated = self._create_annotated_image(image, draw_boundary=draw_boundary)
         self.result.annotated_image = annotated

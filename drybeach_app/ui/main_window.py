@@ -286,7 +286,8 @@ class DryBeachGUI(QMainWindow):
             result, annotated = recognizer.detect_and_visualize(
                 image, 
                 progress_callback=self.detection_tab.set_progress,
-                draw_boundary=False
+                draw_boundary=False,
+                confidence_threshold=params.get('confidence_threshold', 0.0)
             )
             
             self.image_viewer.set_image(annotated)

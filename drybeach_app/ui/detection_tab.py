@@ -81,6 +81,14 @@ class DetectionTab(QWidget):
         self.spin_detect_stride.setRange(2, 64)
         self.spin_detect_stride.setValue(16)
         param_layout.addWidget(self.spin_detect_stride)
+        
+        param_layout.addWidget(QLabel("置信度:"))
+        self.spin_confidence = QDoubleSpinBox()
+        self.spin_confidence.setRange(0.0, 1.0)
+        self.spin_confidence.setValue(0.0)
+        self.spin_confidence.setSingleStep(0.05)
+        self.spin_confidence.setDecimals(2)
+        param_layout.addWidget(self.spin_confidence)
         layout.addLayout(param_layout)
         
         self.btn_run_detection = QPushButton("开始识别")
@@ -255,7 +263,8 @@ class DetectionTab(QWidget):
             'image_path': str(self.image_path),
             'patch_size': int(self.cmb_detect_patch.currentText()),
             'stride': self.spin_detect_stride.value(),
-            'detection_region': self.detection_region
+            'detection_region': self.detection_region,
+            'confidence_threshold': self.spin_confidence.value()
         })
     
     def on_detection_complete(self, annotated_image, class_counts, detection_points=None):
