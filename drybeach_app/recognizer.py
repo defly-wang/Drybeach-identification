@@ -109,19 +109,27 @@ class BoundaryLineGenerator:
         if len(points) < 3:
             return points.tolist()
         
-        points_float = points.astype(np.float64)
+        pts = points.astype(np.float32)
         
-        hull = cv2.convexHull(points_float)
-        hull = hull.squeeze()
-        
-        if len(hull.shape) == 1:
+        if pts.shape[0] < 3:
             return points.tolist()
         
-        expanded = BoundaryLineGenerator._expand_contour(hull, expand)
+        hull = cv2.convexHull(pts)
+        
+        if hull is None or len(hull) < 3:
+            return points.tolist()
+        
+        hull_points = hull.squeeze()
+        
+        if len(hull_points.shape) == 1:
+            return points.tolist()
+        
+        expanded = BoundaryLineGenerator._expand_contour(hull_points, expand)
         
         contour = [[int(p[0]), int(p[1])] for p in expanded]
         
-        contour.append(contour[0])
+        if len(contour) > 1:
+            contour.append(contour[0])
         
         return contour
     
@@ -130,21 +138,24 @@ class BoundaryLineGenerator:
         if len(contour) < 3:
             return contour
         
-        center = np.mean(contour, axis=0)
+        center = np.mean(contour.astype(float), axis=0)
         
         expanded = []
         for pt in contour:
-            direction = pt - center
+            direction = pt.astype(float) - center
             dist = np.linalg.norm(direction)
             if dist > 0:
-                new_pt = pt + (direction / dist) * expand
+                new_pt = pt.astype(float) + (direction / dist) * expand
             else:
-                new_pt = pt
+                new_pt = pt.astype(float)
             expanded.append(new_pt)
         
-        expanded = np.array(expanded)
+        expanded = np.array(expanded, dtype=np.float32)
         
         expanded_hull = cv2.convexHull(expanded)
+        
+        if expanded_hull is None:
+            return np.array(expanded)
         
         return expanded_hull.squeeze()
     
