@@ -294,7 +294,8 @@ class ModelTrainer:
                                    momentum: float = 0.9, weight_decay: float = 0.0001,
                                    patience: int = 15, image_size: int = 64,
                                    dropout: float = 0.5, lr_decay: float = 0.5,
-                                   resume_model_path: str = None) -> str:
+                                   resume_model_path: str = None,
+                                   progress_callback=None) -> str:
         if not TORCH_AVAILABLE:
             raise RuntimeError("PyTorch not available")
         
@@ -426,6 +427,10 @@ class ModelTrainer:
             logger.info(f"Epoch {epoch+1}/{epochs} - "
                        f"Train Loss: {train_loss/len(train_loader):.4f}, Acc: {train_acc:.4f} - "
                        f"Val Loss: {val_loss/len(val_loader):.4f}, Acc: {val_acc:.4f}")
+            
+            if progress_callback:
+                progress = int((epoch + 1) / epochs * 100)
+                progress_callback(progress)
             
             if val_acc > best_val_acc:
                 best_val_acc = val_acc

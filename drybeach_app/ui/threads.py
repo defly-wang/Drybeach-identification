@@ -166,6 +166,9 @@ names: {class_names}
         lr_decay = self.params.get('lr_decay', 0.5)
         resume_model_path = self.params.get('resume_model_path')
         
+        def progress_callback(pct):
+            self.progress_updated.emit(pct)
+        
         model_path = trainer.train_classification_model(
             data_path=data_path,
             epochs=epochs,
@@ -178,7 +181,8 @@ names: {class_names}
             patience=patience if patience > 0 else 15,
             dropout=dropout,
             lr_decay=lr_decay,
-            resume_model_path=resume_model_path
+            resume_model_path=resume_model_path,
+            progress_callback=progress_callback
         )
         
         self.finished.emit([model_path])
