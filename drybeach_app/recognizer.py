@@ -55,19 +55,19 @@ class BoundaryLineGenerator:
         
         boundary_lines = []
         for region_points in regions:
-            if len(region_points) < 5:
+            if len(region_points) < 3:
                 continue
             
-            stroke_path = BoundaryLineGenerator._extract_brush_stroke(region_points)
+            center_line = BoundaryLineGenerator._compute_center_line(region_points)
             
-            if stroke_path and len(stroke_path) > 2:
+            if center_line and len(center_line) > 2:
                 boundary_lines.append({
-                    'type': 'stroke',
-                    'points': stroke_path,
+                    'type': 'centerline',
+                    'points': center_line,
                     'num_points': len(region_points)
                 })
         
-        logger.info(f"Generated {len(boundary_lines)} stroke paths from {len(boundary_points)} boundary points")
+        logger.info(f"Generated {len(boundary_lines)} center lines from {len(boundary_points)} boundary points")
         return boundary_lines
     
     @staticmethod
@@ -106,78 +106,79 @@ class BoundaryLineGenerator:
         return regions
     
     @staticmethod
-    def _extract_brush_stroke(points: np.ndarray) -> List[List[int]]:
-        min_x, min_y = int(np.min(points[:, 0])), int(np.min(points[:, 1]))
-        max_x, max_y = int(np.max(points[:, 0])) + 1, int(np.max(points[:, 1])) + 1
+    def _compute_center_line(points: np.ndarray) -> List[List[int]]:
+        x_range = np.max(points[:, 0]) - np.min(points[:, 0])
+        y_range = np.max(points[:, 1]) - np.min(points[:, 1])
         
-        h, w = max_y - min_y + 10, max_x - min_x + 10
-        mask = np.zeros((h, w), dtype=np.uint8)
-        
-        for p in points:
-            x, y = int(p[0]) - min_x, int(p[1]) - min_y
-            if 0 <= x < w and 0 <= y < h:
-                cv2.circle(mask, (x, y), 2, 255, -1)
-        
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        dilated = cv2.dilate(mask, kernel, iterations=1)
-        
-        skeleton = np.zeros_like(dilated)
-        element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
-        done = False
-        size = img_size = dilated.shape
-        
-        while not done:
-            eroded = cv2.erode(dilated, element)
-            temp = cv2.dilate(eroded, element)
-            temp = cv2.subtract(dilated, temp)
-            skeleton = cv2.bitwise_or(skeleton, temp)
-            dilated = eroded.copy()
-            done = (dilated.sum() == 0)
-        
-        skeleton_points = np.argwhere(skeleton > 0)
-        
-        if len(skeleton_points) < 3:
-            skeleton_points = points - np.array([min_x, min_y])
-        
-        path = BoundaryLineGenerator._order_skeleton_path(skeleton_points)
-        
-        path = [[int(p[0] + min_x), int(p[1] + min_y)] for p in path]
-        
-        return path
+        if x_range > y_range * 1.5:
+            return BoundaryLineGenerator._center_line_horizontal(points)
+        elif y_range > x_range * 1.5:
+            return BoundaryLineGenerator._center_line_vertical(points)
+        else:
+            return BoundaryLineGenerator._center_line_general(points)
     
     @staticmethod
-    def _order_skeleton_path(points: np.ndarray) -> List[np.ndarray]:
-        if len(points) < 2:
-            return points.tolist()
+    def _center_line_horizontal(points: np.ndarray) -> List[List[int]]:
+        bins = {}
+        for p in points:
+            x_bin = int(p[0])
+            if x_bin not in bins:
+                bins[x_bin] = []
+            bins[x_bin].append(p[1])
         
-        points = points.astype(float)
+        center_line = []
+        for x in sorted(bins.keys()):
+            y_median = int(np.median(bins[x]))
+            center_line.append([x, y_median])
         
-        start_idx = np.argmin(points[:, 1])
-        start = points[start_idx]
+        if len(center_line) < 2:
+            return [[int(p[0]), int(p[1])] for p in points]
         
-        path = [start]
-        remaining = list(range(len(points)))
-        remaining.remove(start_idx)
-        current = start.copy()
+        return center_line
+    
+    @staticmethod
+    def _center_line_vertical(points: np.ndarray) -> List[List[int]]:
+        bins = {}
+        for p in points:
+            y_bin = int(p[1])
+            if y_bin not in bins:
+                bins[y_bin] = []
+            bins[y_bin].append(p[0])
         
-        while remaining:
-            min_dist = float('inf')
-            nearest_idx = -1
-            
-            for idx in remaining:
-                d = np.linalg.norm(current - points[idx])
-                if d < min_dist:
-                    min_dist = d
-                    nearest_idx = idx
-            
-            if nearest_idx == -1 or min_dist > 50:
-                break
-            
-            path.append(points[nearest_idx])
-            remaining.remove(nearest_idx)
-            current = points[nearest_idx].copy()
+        center_line = []
+        for y in sorted(bins.keys()):
+            x_median = int(np.median(bins[y]))
+            center_line.append([x_median, y])
         
-        return path
+        if len(center_line) < 2:
+            return [[int(p[0]), int(p[1])] for p in points]
+        
+        return center_line
+    
+    @staticmethod
+    def _center_line_general(points: np.ndarray) -> List[List[int]]:
+        center = np.mean(points, axis=0)
+        
+        angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
+        
+        sorted_indices = np.argsort(angles)
+        sorted_points = points[sorted_indices]
+        
+        n = len(sorted_points)
+        k = max(3, n // 20)
+        
+        center_line = []
+        for i in range(0, n, k):
+            window = sorted_points[max(0, i-k):min(n, i+k+1)]
+            cx = int(np.median(window[:, 0]))
+            cy = int(np.median(window[:, 1]))
+            center_line.append([cx, cy])
+        
+        if len(center_line) < 2:
+            sorted_x = sorted_points[np.argsort(sorted_points[:, 0])]
+            center_line = [[int(p[0]), int(p[1])] for p in sorted_x]
+        
+        return center_line
     
     @staticmethod
     def draw_boundary_lines(image: np.ndarray, boundary_lines: List[Dict], 
