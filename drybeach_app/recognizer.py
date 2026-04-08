@@ -39,7 +39,7 @@ class BoundaryLineGenerator:
     
     @staticmethod
     def generate_boundary_lines(detection_points: List[Dict], image_shape: Tuple[int, int], 
-                                stride: int = 16, expand: float = 8.0) -> List[Dict]:
+                                stride: int = 16) -> List[Dict]:
         if not detection_points:
             return []
         
@@ -58,7 +58,7 @@ class BoundaryLineGenerator:
             if len(region_points) < 3:
                 continue
             
-            contour = BoundaryLineGenerator._create_contour(region_points, expand=expand)
+            contour = BoundaryLineGenerator._create_contour(region_points)
             
             boundary_lines.append({
                 'type': 'contour',
@@ -105,14 +105,11 @@ class BoundaryLineGenerator:
         return regions
     
     @staticmethod
-    def _create_contour(points: np.ndarray, expand: float = 5.0) -> List[List[int]]:
+    def _create_contour(points: np.ndarray) -> List[List[int]]:
         if len(points) < 3:
             return points.tolist()
         
         pts = points.astype(np.float32)
-        
-        if pts.shape[0] < 3:
-            return points.tolist()
         
         hull = cv2.convexHull(pts)
         
@@ -124,40 +121,12 @@ class BoundaryLineGenerator:
         if len(hull_points.shape) == 1:
             return points.tolist()
         
-        expanded = BoundaryLineGenerator._expand_contour(hull_points, expand)
-        
-        contour = [[int(p[0]), int(p[1])] for p in expanded]
+        contour = [[int(p[0]), int(p[1])] for p in hull_points]
         
         if len(contour) > 1:
             contour.append(contour[0])
         
         return contour
-    
-    @staticmethod
-    def _expand_contour(contour: np.ndarray, expand: float) -> np.ndarray:
-        if len(contour) < 3:
-            return contour
-        
-        center = np.mean(contour.astype(float), axis=0)
-        
-        expanded = []
-        for pt in contour:
-            direction = pt.astype(float) - center
-            dist = np.linalg.norm(direction)
-            if dist > 0:
-                new_pt = pt.astype(float) + (direction / dist) * expand
-            else:
-                new_pt = pt.astype(float)
-            expanded.append(new_pt)
-        
-        expanded = np.array(expanded, dtype=np.float32)
-        
-        expanded_hull = cv2.convexHull(expanded)
-        
-        if expanded_hull is None:
-            return np.array(expanded)
-        
-        return expanded_hull.squeeze()
     
     @staticmethod
     def draw_boundary_lines(image: np.ndarray, boundary_lines: List[Dict], 

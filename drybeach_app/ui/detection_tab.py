@@ -314,8 +314,7 @@ class DetectionTab(QWidget):
         boundary_lines = BoundaryLineGenerator.generate_boundary_lines(
             self.detection_points, 
             self.annotated_image.shape,
-            stride=stride,
-            expand=8.0
+            stride=stride
         )
         
         if not boundary_lines:
