@@ -55,18 +55,19 @@ class BoundaryLineGenerator:
         
         boundary_lines = []
         for region_points in regions:
-            if len(region_points) < 3:
+            if len(region_points) < 5:
                 continue
             
-            contour = BoundaryLineGenerator._create_contour(region_points)
+            stroke_path = BoundaryLineGenerator._extract_brush_stroke(region_points)
             
-            boundary_lines.append({
-                'type': 'contour',
-                'points': contour,
-                'num_points': len(region_points)
-            })
+            if stroke_path and len(stroke_path) > 2:
+                boundary_lines.append({
+                    'type': 'stroke',
+                    'points': stroke_path,
+                    'num_points': len(region_points)
+                })
         
-        logger.info(f"Generated {len(boundary_lines)} contours from {len(boundary_points)} boundary points")
+        logger.info(f"Generated {len(boundary_lines)} stroke paths from {len(boundary_points)} boundary points")
         return boundary_lines
     
     @staticmethod
@@ -105,59 +106,78 @@ class BoundaryLineGenerator:
         return regions
     
     @staticmethod
-    def _create_contour(points: np.ndarray) -> List[List[int]]:
-        if len(points) < 3:
-            return points.tolist()
+    def _extract_brush_stroke(points: np.ndarray) -> List[List[int]]:
+        min_x, min_y = int(np.min(points[:, 0])), int(np.min(points[:, 1]))
+        max_x, max_y = int(np.max(points[:, 0])) + 1, int(np.max(points[:, 1])) + 1
         
-        contour = BoundaryLineGenerator._order_points_nn(points)
+        h, w = max_y - min_y + 10, max_x - min_x + 10
+        mask = np.zeros((h, w), dtype=np.uint8)
         
-        if len(contour) > 1:
-            contour.append(contour[0])
+        for p in points:
+            x, y = int(p[0]) - min_x, int(p[1]) - min_y
+            if 0 <= x < w and 0 <= y < h:
+                cv2.circle(mask, (x, y), 2, 255, -1)
         
-        return contour
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        dilated = cv2.dilate(mask, kernel, iterations=1)
+        
+        skeleton = np.zeros_like(dilated)
+        element = cv2.getStructuringElement(cv2.MORPH_CROSS, (3, 3))
+        done = False
+        size = img_size = dilated.shape
+        
+        while not done:
+            eroded = cv2.erode(dilated, element)
+            temp = cv2.dilate(eroded, element)
+            temp = cv2.subtract(dilated, temp)
+            skeleton = cv2.bitwise_or(skeleton, temp)
+            dilated = eroded.copy()
+            done = (dilated.sum() == 0)
+        
+        skeleton_points = np.argwhere(skeleton > 0)
+        
+        if len(skeleton_points) < 3:
+            skeleton_points = points - np.array([min_x, min_y])
+        
+        path = BoundaryLineGenerator._order_skeleton_path(skeleton_points)
+        
+        path = [[int(p[0] + min_x), int(p[1] + min_y)] for p in path]
+        
+        return path
     
     @staticmethod
-    def _order_points_nn(points: np.ndarray) -> List[List[int]]:
-        n = len(points)
-        if n < 3:
-            return [[int(p[0]), int(p[1])] for p in points]
+    def _order_skeleton_path(points: np.ndarray) -> List[np.ndarray]:
+        if len(points) < 2:
+            return points.tolist()
         
-        pts_list = [[float(p[0]), float(p[1])] for p in points]
+        points = points.astype(float)
         
-        ordered = [pts_list[0]]
-        remaining = set(range(1, n))
+        start_idx = np.argmin(points[:, 1])
+        start = points[start_idx]
         
-        current = pts_list[0]
-        max_dist = 0
+        path = [start]
+        remaining = list(range(len(points)))
+        remaining.remove(start_idx)
+        current = start.copy()
         
-        for i in range(1, n):
-            d = np.sqrt((current[0] - pts_list[i][0])**2 + (current[1] - pts_list[i][1])**2)
-            if d > max_dist:
-                max_dist = d
-                farthest = pts_list[i]
-        
-        ordered.append(farthest)
-        remaining.discard(list(pts_list).index(farthest))
-        
-        current = farthest
         while remaining:
-            min_next = float('inf')
-            next_pt = None
-            next_idx = None
+            min_dist = float('inf')
+            nearest_idx = -1
             
-            for j in remaining:
-                d = np.sqrt((current[0] - pts_list[j][0])**2 + (current[1] - pts_list[j][1])**2)
-                if d < min_next:
-                    min_next = d
-                    next_pt = pts_list[j]
-                    next_idx = j
+            for idx in remaining:
+                d = np.linalg.norm(current - points[idx])
+                if d < min_dist:
+                    min_dist = d
+                    nearest_idx = idx
             
-            if next_pt:
-                ordered.append(next_pt)
-                remaining.discard(next_idx)
-                current = next_pt
+            if nearest_idx == -1 or min_dist > 50:
+                break
+            
+            path.append(points[nearest_idx])
+            remaining.remove(nearest_idx)
+            current = points[nearest_idx].copy()
         
-        return [[int(p[0]), int(p[1])] for p in ordered]
+        return path
     
     @staticmethod
     def draw_boundary_lines(image: np.ndarray, boundary_lines: List[Dict], 
