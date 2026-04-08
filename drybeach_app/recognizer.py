@@ -23,14 +23,14 @@ class DetectionResult:
         self.annotated_image = None
         self.class_counts = {}
         self.detection_points = []
-        self.boundary_line = []
+        self.boundary_lines = []
     
     def to_dict(self) -> Dict:
         return {
             'class_map': self.class_map,
             'class_counts': self.class_counts,
             'detection_points': self.detection_points,
-            'boundary_line': self.boundary_line
+            'boundary_lines': self.boundary_lines
         }
 
 
@@ -150,6 +150,8 @@ class DryBeachRecognizer:
         elif image.shape[2] == 4:
             image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
         
+        self._original_image = image.copy()
+        
         img_h, img_w = image.shape[:2]
         
         self.result = DetectionResult()
@@ -231,32 +233,34 @@ class DryBeachRecognizer:
         
         return self.result
     
-    def detect_and_visualize(self, image: np.ndarray, progress_callback=None) -> Tuple[DetectionResult, np.ndarray]:
+    def detect_and_visualize(self, image: np.ndarray, progress_callback=None, draw_boundary: bool = False) -> Tuple[DetectionResult, np.ndarray]:
         self.detect(image, progress_callback=progress_callback)
         
-        annotated = self._create_annotated_image(image)
+        annotated = self._create_annotated_image(image, draw_boundary=draw_boundary)
         self.result.annotated_image = annotated
         
         return self.result, annotated
     
-    def _create_annotated_image(self, image: np.ndarray) -> np.ndarray:
+    def _create_annotated_image(self, image: np.ndarray, draw_boundary: bool = False, draw_points: bool = True) -> np.ndarray:
         result = image.copy()
         
-        for point in self.result.detection_points:
-            x = point['x']
-            y = point['y']
-            class_id = point['class_id']
-            confidence = point['confidence']
-            
-            if confidence < 0.7:
-                continue
-            
-            color = self.CATEGORY_COLORS.get(class_id, (255, 255, 255))
-            
-            if 0 <= x < result.shape[1] and 0 <= y < result.shape[0]:
-                cv2.circle(result, (x, y), 1, color, -1)
+        if draw_points:
+            for point in self.result.detection_points:
+                x = point['x']
+                y = point['y']
+                class_id = point['class_id']
+                confidence = point['confidence']
+                
+                if confidence < 0.7:
+                    continue
+                
+                color = self.CATEGORY_COLORS.get(class_id, (255, 255, 255))
+                
+                if 0 <= x < result.shape[1] and 0 <= y < result.shape[0]:
+                    cv2.circle(result, (x, y), 2, color, -1)
         
-        self._draw_boundary_line(result)
+        if draw_boundary:
+            self._draw_boundary_line(result)
         
         return result
     
@@ -267,36 +271,161 @@ class DryBeachRecognizer:
             if p['class_id'] == 2 and p['confidence'] >= 0.7
         ]
         
+        logger.info(f"分界线点数量: {len(boundary_points)}")
+        
         if not boundary_points:
-            self.result.boundary_line = []
+            self.result.boundary_lines = []
             return
         
-        boundary_points.sort(key=lambda p: p[0])
+        points_array = np.array(boundary_points)
+        x_min, x_max = points_array[:, 0].min(), points_array[:, 0].max()
+        y_min, y_max = points_array[:, 1].min(), points_array[:, 1].max()
         
-        x_coords = [p[0] for p in boundary_points]
-        y_coords = [p[1] for p in boundary_points]
+        stride = self.stride if hasattr(self, 'stride') else 16
+        cell_size = stride
         
-        try:
-            min_x, max_x = min(x_coords), max(x_coords)
-            x_range = np.arange(min_x, max_x + 1, 1)
-            f = interp1d(x_coords, y_coords, kind='linear', fill_value='extrapolate')
-            y_interpolated = f(x_range).astype(int)
+        grid_cols = int((x_max - x_min) / cell_size) + 1
+        grid_rows = int((y_max - y_min) / cell_size) + 1
+        
+        grid = [[set() for _ in range(grid_cols)] for _ in range(grid_rows)]
+        
+        for x, y in boundary_points:
+            col = int((x - x_min) / cell_size)
+            row = int((y - y_min) / cell_size)
+            col = min(col, grid_cols - 1)
+            row = min(row, grid_rows - 1)
+            grid[row][col].add((x, y))
+        
+        visited = [[False for _ in range(grid_cols)] for _ in range(grid_rows)]
+        clusters = []
+        
+        def flood_fill(r, c, cluster):
+            stack = [(r, c)]
             
-            self.result.boundary_line = [(int(x), int(y)) for x, y in zip(x_range, y_interpolated)]
-        except Exception as e:
-            logger.warning(f"Failed to interpolate boundary line: {e}")
-            self.result.boundary_line = boundary_points
+            while stack:
+                cr, cc = stack.pop()
+                if cr < 0 or cr >= grid_rows or cc < 0 or cc >= grid_cols:
+                    continue
+                if visited[cr][cc] or not grid[cr][cc]:
+                    continue
+                
+                visited[cr][cc] = True
+                cluster.update(grid[cr][cc])
+                
+                stack.append((cr-1, cc))
+                stack.append((cr+1, cc))
+                stack.append((cr, cc-1))
+                stack.append((cr, cc+1))
+                stack.append((cr-1, cc-1))
+                stack.append((cr-1, cc+1))
+                stack.append((cr+1, cc-1))
+                stack.append((cr+1, cc+1))
+        
+        for r in range(grid_rows):
+            for c in range(grid_cols):
+                if not visited[r][c] and grid[r][c]:
+                    cluster = set()
+                    flood_fill(r, c, cluster)
+                    if cluster:
+                        clusters.append(list(cluster))
+        
+        logger.info(f"连通区域数量: {len(clusters)}")
+        
+        self.result.boundary_lines = []
+        
+        for cluster in clusters:
+            cluster.sort(key=lambda p: p[0])
+            
+            x_coords = [p[0] for p in cluster]
+            y_coords = [p[1] for p in cluster]
+            
+            if len(x_coords) < 2:
+                self.result.boundary_lines.append(cluster)
+                continue
+            
+            try:
+                from scipy.interpolate import UnivariateSpline
+                
+                head_count = min(5, len(x_coords) // 3)
+                tail_count = min(5, len(x_coords) // 3)
+                
+                head_x = x_coords[:head_count]
+                head_y = y_coords[:head_count]
+                tail_x = x_coords[-tail_count:]
+                tail_y = y_coords[-tail_count:]
+                
+                head_coeffs = np.polyfit(head_x, head_y, 1)
+                tail_coeffs = np.polyfit(tail_x, tail_y, 1)
+                
+                min_x = min(x_coords)
+                max_x = max(x_coords)
+                
+                head_trend_y = head_coeffs[0] * min_x + head_coeffs[1]
+                tail_trend_y = tail_coeffs[0] * max_x + tail_coeffs[1]
+                
+                start_x = min_x
+                end_x = max_x
+                
+                unique_x = sorted(set(x_coords))
+                if len(unique_x) < 4:
+                    k = len(unique_x) - 1
+                else:
+                    k = 3
+                k = min(k, len(x_coords) - 1)
+                
+                spline = UnivariateSpline(x_coords, y_coords, k=k, s=0)
+                
+                x_range = np.arange(start_x, end_x + 1, 1)
+                y_interpolated = spline(x_range).astype(int)
+                
+                line = [(int(x), int(max(0, y))) for x, y in zip(x_range, y_interpolated)]
+                self.result.boundary_lines.append(line)
+                
+                logger.info(f"生成分界线: {len(line)} 个点, 起点({start_x},{int(head_trend_y)}), 终点({end_x},{int(tail_trend_y)})")
+            except Exception as e:
+                logger.warning(f"Failed to interpolate boundary line: {e}")
+                self.result.boundary_lines.append(cluster)
     
     def _draw_boundary_line(self, image: np.ndarray):
-        if not self.result.boundary_line:
+        if not hasattr(self.result, 'boundary_lines') or not self.result.boundary_lines:
+            logger.warning("没有分界线数据")
             return
+        
+        logger.info(f"开始绘制分界线，数量: {len(self.result.boundary_lines)}")
+        
+        for idx, boundary_line in enumerate(self.result.boundary_lines):
+            logger.info(f"  线 {idx}: {len(boundary_line)} 个点, 前3点: {boundary_line[:3]}")
         
         boundary_color = (0, 255, 255)
         
-        for i in range(len(self.result.boundary_line) - 1):
-            pt1 = self.result.boundary_line[i]
-            pt2 = self.result.boundary_line[i + 1]
-            cv2.line(image, pt1, pt2, boundary_color, 2)
+        for boundary_line in self.result.boundary_lines:
+            for i in range(len(boundary_line) - 1):
+                pt1 = boundary_line[i]
+                pt2 = boundary_line[i + 1]
+                cv2.line(image, pt1, pt2, boundary_color, 2)
+    
+    def draw_boundary_only(self, image: np.ndarray) -> np.ndarray:
+        result = image.copy()
+        
+        if not hasattr(self.result, 'boundary_lines') or not self.result.boundary_lines:
+            return result
+        
+        boundary_color = (0, 255, 255)
+        
+        for boundary_line in self.result.boundary_lines:
+            for i in range(len(boundary_line) - 1):
+                pt1 = boundary_line[i]
+                pt2 = boundary_line[i + 1]
+                cv2.line(result, pt1, pt2, boundary_color, 2)
+        
+        return result
+    
+    def draw_boundary_only_from_original(self) -> np.ndarray:
+        if not hasattr(self, '_original_image'):
+            return None
+        
+        result = self._original_image.copy()
+        return self.draw_boundary_only(result)
     
     def batch_detect(self, images: List[np.ndarray]) -> List[DetectionResult]:
         results = []

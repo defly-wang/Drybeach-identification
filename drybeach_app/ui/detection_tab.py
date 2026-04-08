@@ -101,6 +101,11 @@ class DetectionTab(QWidget):
         self.btn_save_result.setEnabled(False)
         layout.addWidget(self.btn_save_result)
         
+        self.btn_draw_boundary = QPushButton("画分界线")
+        self.btn_draw_boundary.clicked.connect(self.draw_boundary_line)
+        self.btn_draw_boundary.setEnabled(False)
+        layout.addWidget(self.btn_draw_boundary)
+        
         layout.addStretch()
         self.setLayout(layout)
     
@@ -257,6 +262,7 @@ class DetectionTab(QWidget):
             count_text = " | ".join([f"{k}: {v}" for k, v in class_counts.items()])
             self.lbl_detect_result.setText(count_text)
             self.btn_save_result.setEnabled(True)
+            self.btn_draw_boundary.setEnabled(True)
             self.result_ready.emit(annotated_image)
     
     def save_result(self):
@@ -281,8 +287,17 @@ class DetectionTab(QWidget):
     def set_progress(self, value):
         self.detect_progress.setValue(value)
     
+    def draw_boundary_line(self):
+        self.boundary_draw_requested.emit()
+    
+    def update_image_with_boundary(self, image_with_boundary):
+        if image_with_boundary is not None:
+            self.annotated_image = image_with_boundary
+            self.result_ready.emit(image_with_boundary)
+    
     image_loaded = pyqtSignal(str)
     result_ready = pyqtSignal(object)
     draw_region_requested = pyqtSignal(str)
     region_cleared = pyqtSignal()
     region_loaded = pyqtSignal(object)
+    boundary_draw_requested = pyqtSignal()

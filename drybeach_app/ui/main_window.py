@@ -138,6 +138,7 @@ class DryBeachGUI(QMainWindow):
         tab.draw_region_requested.connect(self.on_draw_region_requested)
         tab.region_cleared.connect(self.on_region_cleared)
         tab.region_loaded.connect(self.on_region_loaded)
+        tab.boundary_draw_requested.connect(self.on_boundary_draw_requested)
         return tab
     
     def _create_calibration_tab(self) -> CalibrationTab:
@@ -274,13 +275,18 @@ class DryBeachGUI(QMainWindow):
             recognizer.detection_region = params.get('detection_region')
             
             image = cv2.imread(params['image_path'])
+            self.current_image_for_line = image
+            
             result, annotated = recognizer.detect_and_visualize(
                 image, 
-                progress_callback=self.detection_tab.set_progress
+                progress_callback=self.detection_tab.set_progress,
+                draw_boundary=False
             )
             
             self.image_viewer.set_image(annotated)
             self.detection_tab.on_detection_complete(annotated, result.class_counts)
+            self.current_recognizer = recognizer
+            self.annotated_image = annotated
             
             self.statusBar().showMessage("识别完成")
             
@@ -312,6 +318,28 @@ class DryBeachGUI(QMainWindow):
             self.detection_tab.set_detection_region(region_data)
             self.image_viewer.set_detection_region(region_data)
             self.statusBar().showMessage("识别区域已加载")
+    
+    def on_boundary_draw_requested(self):
+        if not hasattr(self, 'current_recognizer') or self.current_recognizer is None:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "警告", "请先运行识别")
+            return
+        
+        if not hasattr(self, 'current_image') or self.current_image is None:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "警告", "请先打开图片")
+            return
+        
+        if not hasattr(self, 'annotated_image') or self.annotated_image is None:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "警告", "没有可用的识别结果")
+            return
+        
+        image_with_boundary = self.current_recognizer.draw_boundary_only(self.annotated_image)
+        
+        self.image_viewer.set_image(image_with_boundary)
+        self.detection_tab.update_image_with_boundary(image_with_boundary)
+        self.statusBar().showMessage("界线已绘制")
     
     def on_detection_complete(self, results: list):
         self.statusBar().showMessage(f"识别完成: {len(results)} 张图片")
