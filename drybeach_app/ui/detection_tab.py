@@ -309,9 +309,12 @@ class DetectionTab(QWidget):
         
         self.original_result = self.annotated_image.copy()
         
+        stride = self.spin_detect_stride.value()
+        
         boundary_lines = BoundaryLineGenerator.generate_boundary_lines(
             self.detection_points, 
-            self.annotated_image.shape
+            self.annotated_image.shape,
+            stride=stride
         )
         
         if not boundary_lines:
