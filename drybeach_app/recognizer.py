@@ -2,8 +2,9 @@ import cv2
 import numpy as np
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
+from scipy import ndimage
+from sklearn.cluster import DBSCAN
 import logging
-from scipy.interpolate import interp1d
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,6 +33,217 @@ class DetectionResult:
             'detection_points': self.detection_points,
             'boundary_lines': self.boundary_lines
         }
+
+
+class BoundaryLineGenerator:
+    CATEGORY_NAMES = ['water', 'beach', 'boundary', 'dam']
+    BOUNDARY_CLASS_ID = 2
+    
+    @staticmethod
+    def generate_boundary_lines(detection_points: List[Dict], image_shape: Tuple[int, int]) -> List[Dict]:
+        if not detection_points:
+            return []
+        
+        img_h, img_w = image_shape[:2]
+        
+        boundary_points = [p for p in detection_points if p['class_id'] == BoundaryLineGenerator.BOUNDARY_CLASS_ID]
+        
+        if len(boundary_points) < 3:
+            boundary_points = [p for p in detection_points if p['class_id'] == 0]
+        
+        if len(boundary_points) < 3:
+            logger.warning("Not enough boundary points to generate lines")
+            return []
+        
+        points = np.array([[p['x'], p['y']] for p in boundary_points])
+        
+        clusters = BoundaryLineGenerator._cluster_points(points)
+        
+        boundary_lines = []
+        for cluster in clusters:
+            if len(cluster) < 3:
+                continue
+            
+            line_type, center_line = BoundaryLineGenerator._fit_curve(cluster)
+            
+            if center_line is not None and len(center_line) > 2:
+                boundary_lines.append({
+                    'type': line_type,
+                    'points': center_line.tolist() if isinstance(center_line, np.ndarray) else center_line,
+                    'num_points': len(boundary_points)
+                })
+        
+        logger.info(f"Generated {len(boundary_lines)} boundary lines from {len(boundary_points)} points")
+        return boundary_lines
+    
+    @staticmethod
+    def _cluster_points(points: np.ndarray) -> List[np.ndarray]:
+        if len(points) < 10:
+            return [points]
+        
+        try:
+            from sklearn.cluster import DBSCAN
+            clustering = DBSCAN(eps=20, min_samples=3).fit(points)
+            labels = clustering.labels_
+            
+            clusters = []
+            for label in set(labels):
+                if label == -1:
+                    continue
+                cluster = points[labels == label]
+                clusters.append(cluster)
+        except ImportError:
+            clusters = [points]
+        
+        clusters.sort(key=lambda c: np.median(c[:, 1]))
+        
+        return clusters
+    
+    @staticmethod
+    def _fit_curve(points: np.ndarray) -> Tuple[str, np.ndarray]:
+        sorted_indices = np.argsort(points[:, 1])
+        sorted_points = points[sorted_indices]
+        
+        x_coords = sorted_points[:, 0].astype(float)
+        y_coords = sorted_points[:, 1].astype(float)
+        
+        x_range = np.max(x_coords) - np.min(x_coords)
+        y_range = np.max(y_coords) - np.min(y_coords)
+        
+        if y_range > x_range * 2:
+            line_type, center_line = BoundaryLineGenerator._fit_vertical_curve(sorted_points)
+        elif x_range > y_range * 2:
+            line_type, center_line = BoundaryLineGenerator._fit_horizontal_curve(sorted_points)
+        else:
+            line_type, center_line = BoundaryLineGenerator._detect_arc(sorted_points)
+        
+        if center_line is None or len(center_line) < 2:
+            line_type = "linear"
+            center_line = BoundaryLineGenerator._fit_polynomial_curve(sorted_points, degree=1)
+        
+        return line_type, center_line
+    
+    @staticmethod
+    def _fit_horizontal_curve(points: np.ndarray) -> Tuple[str, np.ndarray]:
+        sorted_indices = np.argsort(points[:, 1])
+        sorted_points = points[sorted_indices]
+        
+        x = sorted_points[:, 0].astype(float)
+        y = sorted_points[:, 1].astype(float)
+        
+        coeffs = np.polyfit(y, x, 2)
+        
+        y_new = np.linspace(np.min(y), np.max(y), 50)
+        x_new = np.polyval(coeffs, y_new)
+        
+        center_line = np.column_stack((x_new, y_new)).astype(int)
+        
+        return "horizontal_curve", center_line
+    
+    @staticmethod
+    def _fit_vertical_curve(points: np.ndarray) -> Tuple[str, np.ndarray]:
+        sorted_indices = np.argsort(points[:, 0])
+        sorted_points = points[sorted_indices]
+        
+        x = sorted_points[:, 0].astype(float)
+        y = sorted_points[:, 1].astype(float)
+        
+        coeffs = np.polyfit(x, y, 2)
+        
+        x_new = np.linspace(np.min(x), np.max(x), 50)
+        y_new = np.polyval(coeffs, x_new)
+        
+        center_line = np.column_stack((x_new, y_new)).astype(int)
+        
+        return "vertical_curve", center_line
+    
+    @staticmethod
+    def _detect_arc(points: np.ndarray) -> Tuple[str, np.ndarray]:
+        center = np.mean(points, axis=0)
+        distances = np.sqrt(np.sum((points - center) ** 2, axis=1))
+        
+        dist_std = np.std(distances)
+        dist_mean = np.mean(distances)
+        
+        if dist_std < dist_mean * 0.15 and len(points) > 10:
+            return BoundaryLineGenerator._fit_circle(points, center, dist_mean)
+        
+        return "polynomial", BoundaryLineGenerator._fit_polynomial_curve(points, degree=2)
+    
+    @staticmethod
+    def _fit_circle(points: np.ndarray, center: np.ndarray, radius: float) -> Tuple[str, np.ndarray]:
+        angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
+        sorted_indices = np.argsort(angles)
+        sorted_angles = angles[sorted_indices]
+        
+        angle_range = np.max(sorted_angles) - np.min(sorted_angles)
+        
+        if angle_range < np.pi * 0.6:
+            line_type = "arc"
+            angle_start = sorted_angles.min()
+            angle_end = sorted_angles.max()
+        else:
+            line_type = "circle"
+            angle_start = 0
+            angle_end = 2 * np.pi
+        
+        num_points = max(50, int(angle_range * 50 / np.pi))
+        angles_new = np.linspace(angle_start, angle_end, num_points)
+        
+        x_new = center[0] + radius * np.cos(angles_new)
+        y_new = center[1] + radius * np.sin(angles_new)
+        
+        center_line = np.column_stack((x_new, y_new)).astype(int)
+        
+        return line_type, center_line
+    
+    @staticmethod
+    def _fit_polynomial_curve(points: np.ndarray, degree: int = 2) -> np.ndarray:
+        if len(points) < degree + 1:
+            degree = 1
+        
+        x = points[:, 0].astype(float)
+        y = points[:, 1].astype(float)
+        
+        sorted_indices = np.argsort(x)
+        sorted_points = points[sorted_indices]
+        
+        x_sorted = sorted_points[:, 0].astype(float)
+        y_sorted = sorted_points[:, 1].astype(float)
+        
+        try:
+            if degree == 1:
+                coeffs = np.polyfit(x_sorted, y_sorted, 1)
+                x_new = np.linspace(x_sorted.min(), x_sorted.max(), 50)
+                y_new = np.polyval(coeffs, x_new)
+            else:
+                coeffs_x = np.polyfit(y_sorted, x_sorted, min(degree, len(x_sorted) - 1))
+                y_new = np.linspace(y_sorted.min(), y_sorted.max(), 50)
+                x_new = np.polyval(coeffs_x, y_new)
+            
+            center_line = np.column_stack((x_new, y_new)).astype(int)
+        except:
+            center_line = sorted_points[::max(1, len(sorted_points) // 50)]
+        
+        return center_line
+    
+    @staticmethod
+    def draw_boundary_lines(image: np.ndarray, boundary_lines: List[Dict], 
+                          color: Tuple[int, int, int] = (0, 255, 0),
+                          thickness: int = 3) -> np.ndarray:
+        result = image.copy()
+        
+        for line in boundary_lines:
+            points = np.array(line['points'])
+            if len(points) < 2:
+                continue
+            
+            cv2.polylines(result, [points], False, color, thickness)
+            
+            for pt in points[::max(1, len(points) // 5)]:
+                cv2.circle(result, (int(pt[0]), int(pt[1])), 4, color, -1)
+        
+        return result
 
 
 class CNNClassifier(nn.Module):

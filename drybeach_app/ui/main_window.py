@@ -284,7 +284,7 @@ class DryBeachGUI(QMainWindow):
             )
             
             self.image_viewer.set_image(annotated)
-            self.detection_tab.on_detection_complete(annotated, result.class_counts)
+            self.detection_tab.on_detection_complete(annotated, result.class_counts, result.detection_points)
             self.current_recognizer = recognizer
             self.annotated_image = annotated
             
@@ -351,8 +351,10 @@ class DryBeachGUI(QMainWindow):
                 self.image_viewer.set_image(self.annotated_image)
                 
                 counts = first_result.get('class_counts', {})
-                count_text = " | ".join([f"{k}: {v}" for k, v in counts.items()])
-                self.detection_tab.lbl_detect_result.setText(count_text)
+                detection_points = first_result.get('detection_points', [])
+                self.detection_tab.on_detection_complete(
+                    self.annotated_image, counts, detection_points
+                )
     
     def on_error(self, error_msg: str):
         self.statusBar().showMessage("处理出错")

@@ -71,6 +71,7 @@ class ProcessingThread(QThread):
                 results.append({
                     'annotated': annotated,
                     'class_counts': result.class_counts,
+                    'detection_points': result.detection_points,
                     'image_path': img_path
                 })
                 

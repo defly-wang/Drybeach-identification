@@ -106,6 +106,11 @@ class DetectionTab(QWidget):
         self.btn_draw_boundary.setEnabled(False)
         layout.addWidget(self.btn_draw_boundary)
         
+        self.btn_clear_boundary = QPushButton("清除分界线")
+        self.btn_clear_boundary.clicked.connect(self.clear_boundary_line)
+        self.btn_clear_boundary.setEnabled(False)
+        layout.addWidget(self.btn_clear_boundary)
+        
         layout.addStretch()
         self.setLayout(layout)
     
@@ -253,12 +258,14 @@ class DetectionTab(QWidget):
             'detection_region': self.detection_region
         })
     
-    def on_detection_complete(self, annotated_image, class_counts):
+    def on_detection_complete(self, annotated_image, class_counts, detection_points=None):
         self.detect_progress.setVisible(False)
         self.btn_run_detection.setEnabled(True)
         
         if annotated_image is not None:
             self.annotated_image = annotated_image
+            self.original_result = annotated_image.copy()
+            self.detection_points = detection_points or []
             count_text = " | ".join([f"{k}: {v}" for k, v in class_counts.items()])
             self.lbl_detect_result.setText(count_text)
             self.btn_save_result.setEnabled(True)
@@ -288,7 +295,50 @@ class DetectionTab(QWidget):
         self.detect_progress.setValue(value)
     
     def draw_boundary_line(self):
-        self.boundary_draw_requested.emit()
+        from drybeach_app.recognizer import BoundaryLineGenerator
+        
+        if not hasattr(self, 'detection_points') or not self.detection_points:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "警告", "请先进行识别")
+            return
+        
+        if self.annotated_image is None:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "警告", "没有可处理的图像")
+            return
+        
+        self.original_result = self.annotated_image.copy()
+        
+        boundary_lines = BoundaryLineGenerator.generate_boundary_lines(
+            self.detection_points, 
+            self.annotated_image.shape
+        )
+        
+        if not boundary_lines:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "警告", "未能生成分界线，请确保有足够的边界点")
+            return
+        
+        result = BoundaryLineGenerator.draw_boundary_lines(
+            self.annotated_image, 
+            boundary_lines,
+            color=(0, 255, 0),
+            thickness=3
+        )
+        
+        self.annotated_image = result
+        self.boundary_lines = boundary_lines
+        self.btn_clear_boundary.setEnabled(True)
+        self.result_ready.emit(result)
+        
+        line_types = [line['type'] for line in boundary_lines]
+        self.lbl_detect_result.setText(f"已生成 {len(boundary_lines)} 条分界线: {', '.join(set(line_types))}")
+    
+    def clear_boundary_line(self):
+        if hasattr(self, 'original_result'):
+            self.annotated_image = self.original_result.copy()
+            self.result_ready.emit(self.annotated_image)
+            self.btn_clear_boundary.setEnabled(False)
     
     def update_image_with_boundary(self, image_with_boundary):
         if image_with_boundary is not None:
