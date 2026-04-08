@@ -39,7 +39,7 @@ class BoundaryLineGenerator:
     
     @staticmethod
     def generate_boundary_lines(detection_points: List[Dict], image_shape: Tuple[int, int], 
-                                stride: int = 16) -> List[Dict]:
+                                stride: int = 16, expand: float = 8.0) -> List[Dict]:
         if not detection_points:
             return []
         
@@ -58,7 +58,7 @@ class BoundaryLineGenerator:
             if len(region_points) < 3:
                 continue
             
-            contour = BoundaryLineGenerator._create_contour(region_points)
+            contour = BoundaryLineGenerator._create_contour(region_points, expand=expand)
             
             boundary_lines.append({
                 'type': 'contour',
@@ -105,66 +105,48 @@ class BoundaryLineGenerator:
         return regions
     
     @staticmethod
-    def _create_contour(points: np.ndarray) -> List[List[int]]:
+    def _create_contour(points: np.ndarray, expand: float = 5.0) -> List[List[int]]:
         if len(points) < 3:
             return points.tolist()
         
-        x_range = np.max(points[:, 0]) - np.min(points[:, 0])
-        y_range = np.max(points[:, 1]) - np.min(points[:, 1])
+        points_float = points.astype(np.float64)
         
-        if x_range > y_range * 1.5:
-            sorted_idx = np.argsort(points[:, 0])
-        elif y_range > x_range * 1.5:
-            sorted_idx = np.argsort(points[:, 1])
-        else:
-            center = np.mean(points, axis=0)
-            angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
-            sorted_idx = np.argsort(angles)
+        hull = cv2.convexHull(points_float)
+        hull = hull.squeeze()
         
-        sorted_points = points[sorted_idx]
+        if len(hull.shape) == 1:
+            return points.tolist()
         
-        contour = []
-        for p in sorted_points:
-            contour.append([int(p[0]), int(p[1])])
+        expanded = BoundaryLineGenerator._expand_contour(hull, expand)
         
-        contour = BoundaryLineGenerator._connect_nearest_neighbor(contour)
+        contour = [[int(p[0]), int(p[1])] for p in expanded]
+        
+        contour.append(contour[0])
         
         return contour
     
     @staticmethod
-    def _connect_nearest_neighbor(points: List[List[int]]) -> List[List[int]]:
-        if len(points) < 3:
-            return points
+    def _expand_contour(contour: np.ndarray, expand: float) -> np.ndarray:
+        if len(contour) < 3:
+            return contour
         
-        n = len(points)
-        used = [False] * n
-        ordered = []
+        center = np.mean(contour, axis=0)
         
-        start_idx = 0
-        ordered.append(points[start_idx])
-        used[start_idx] = True
+        expanded = []
+        for pt in contour:
+            direction = pt - center
+            dist = np.linalg.norm(direction)
+            if dist > 0:
+                new_pt = pt + (direction / dist) * expand
+            else:
+                new_pt = pt
+            expanded.append(new_pt)
         
-        current = points[start_idx]
+        expanded = np.array(expanded)
         
-        while len(ordered) < n:
-            min_dist = float('inf')
-            nearest_idx = -1
-            
-            for i in range(n):
-                if not used[i]:
-                    dist = np.sqrt((current[0] - points[i][0])**2 + (current[1] - points[i][1])**2)
-                    if dist < min_dist:
-                        min_dist = dist
-                        nearest_idx = i
-            
-            if nearest_idx == -1:
-                break
-            
-            ordered.append(points[nearest_idx])
-            used[nearest_idx] = True
-            current = points[nearest_idx]
+        expanded_hull = cv2.convexHull(expanded)
         
-        return ordered
+        return expanded_hull.squeeze()
     
     @staticmethod
     def draw_boundary_lines(image: np.ndarray, boundary_lines: List[Dict], 
