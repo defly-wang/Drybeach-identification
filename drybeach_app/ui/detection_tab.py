@@ -101,7 +101,7 @@ class DetectionTab(QWidget):
         self.btn_save_result.setEnabled(False)
         layout.addWidget(self.btn_save_result)
         
-        self.btn_draw_boundary = QPushButton("画分界线")
+        self.btn_draw_boundary = QPushButton("生成分界线")
         self.btn_draw_boundary.clicked.connect(self.draw_boundary_line)
         self.btn_draw_boundary.setEnabled(False)
         layout.addWidget(self.btn_draw_boundary)
