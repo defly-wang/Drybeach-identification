@@ -127,7 +127,44 @@ class BoundaryLineGenerator:
         for p in sorted_points:
             contour.append([int(p[0]), int(p[1])])
         
+        contour = BoundaryLineGenerator._connect_nearest_neighbor(contour)
+        
         return contour
+    
+    @staticmethod
+    def _connect_nearest_neighbor(points: List[List[int]]) -> List[List[int]]:
+        if len(points) < 3:
+            return points
+        
+        n = len(points)
+        used = [False] * n
+        ordered = []
+        
+        start_idx = 0
+        ordered.append(points[start_idx])
+        used[start_idx] = True
+        
+        current = points[start_idx]
+        
+        while len(ordered) < n:
+            min_dist = float('inf')
+            nearest_idx = -1
+            
+            for i in range(n):
+                if not used[i]:
+                    dist = np.sqrt((current[0] - points[i][0])**2 + (current[1] - points[i][1])**2)
+                    if dist < min_dist:
+                        min_dist = dist
+                        nearest_idx = i
+            
+            if nearest_idx == -1:
+                break
+            
+            ordered.append(points[nearest_idx])
+            used[nearest_idx] = True
+            current = points[nearest_idx]
+        
+        return ordered
     
     @staticmethod
     def draw_boundary_lines(image: np.ndarray, boundary_lines: List[Dict], 
@@ -136,14 +173,17 @@ class BoundaryLineGenerator:
         result = image.copy()
         
         for line in boundary_lines:
-            points = np.array(line['points'])
+            points = line['points']
             if len(points) < 2:
                 continue
             
-            cv2.polylines(result, [points], False, color, thickness)
+            for i in range(len(points) - 1):
+                pt1 = (int(points[i][0]), int(points[i][1]))
+                pt2 = (int(points[i+1][0]), int(points[i+1][1]))
+                cv2.line(result, pt1, pt2, color, thickness)
             
-            for pt in points[::max(1, len(points) // 5)]:
-                cv2.circle(result, (int(pt[0]), int(pt[1])), 4, color, -1)
+            for pt in points[::max(1, len(points) // 10)]:
+                cv2.circle(result, (int(pt[0]), int(pt[1])), 5, color, -1)
         
         return result
 
