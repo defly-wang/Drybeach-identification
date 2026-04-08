@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-                             QFileDialog, QComboBox, QSpinBox, QProgressBar, QTextEdit)
+                             QFileDialog, QComboBox, QSpinBox, QDoubleSpinBox, QProgressBar, QTextEdit)
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QTextCursor
 
