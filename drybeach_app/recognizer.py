@@ -3,6 +3,7 @@ import numpy as np
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 import logging
+from scipy.interpolate import interp1d
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,36 +23,60 @@ class DetectionResult:
         self.annotated_image = None
         self.class_counts = {}
         self.detection_points = []
+        self.boundary_line = []
+    
+    def to_dict(self) -> Dict:
+        return {
+            'class_map': self.class_map,
+            'class_counts': self.class_counts,
+            'detection_points': self.detection_points,
+            'boundary_line': self.boundary_line
+        }
 
 
 class CNNClassifier(nn.Module):
-    def __init__(self, num_classes: int = 4):
+    def __init__(self, num_classes: int = 4, input_size: int = 64):
         super().__init__()
         
         self.features = nn.Sequential(
-            nn.Conv2d(3, 32, 3, padding=1),
-            nn.BatchNorm2d(32),
+            nn.Conv2d(3, 64, 3, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.MaxPool2d(2),
-            
-            nn.Conv2d(32, 64, 3, padding=1),
+            nn.Conv2d(64, 64, 3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.MaxPool2d(2),
+            nn.Dropout2d(0.25),
             
             nn.Conv2d(64, 128, 3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
+            nn.Conv2d(128, 128, 3, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
             nn.MaxPool2d(2),
+            nn.Dropout2d(0.25),
             
             nn.Conv2d(128, 256, 3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Conv2d(256, 256, 3, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Dropout2d(0.25),
+            
+            nn.Conv2d(256, 512, 3, padding=1),
+            nn.BatchNorm2d(512),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((2, 2)),
         )
         
         self.classifier = nn.Sequential(
             nn.Flatten(),
+            nn.Dropout(0.5),
+            nn.Linear(512 * 2 * 2, 256),
+            nn.ReLU(),
             nn.Dropout(0.5),
             nn.Linear(256, num_classes)
         )
@@ -92,7 +117,7 @@ class DryBeachRecognizer:
         
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         
-        self.model = CNNClassifier(num_classes=4)
+        self.model = CNNClassifier(num_classes=4, input_size=64)
         state_dict = torch.load(model_path, map_location=self.device)
         self.model.load_state_dict(state_dict)
         self.model.to(self.device)
@@ -195,6 +220,8 @@ class DryBeachRecognizer:
         self.result.class_counts = class_counts
         self.result.detection_points = detection_points
         
+        self._generate_boundary_line()
+        
         print(f"\n{'='*50}")
         print("识别结果统计:")
         for name, count in class_counts.items():
@@ -227,9 +254,49 @@ class DryBeachRecognizer:
             color = self.CATEGORY_COLORS.get(class_id, (255, 255, 255))
             
             if 0 <= x < result.shape[1] and 0 <= y < result.shape[0]:
-                cv2.circle(result, (x, y), 8, color, -1)
+                cv2.circle(result, (x, y), 1, color, -1)
+        
+        self._draw_boundary_line(result)
         
         return result
+    
+    def _generate_boundary_line(self):
+        boundary_points = [
+            (p['x'], p['y']) 
+            for p in self.result.detection_points 
+            if p['class_id'] == 2 and p['confidence'] >= 0.7
+        ]
+        
+        if not boundary_points:
+            self.result.boundary_line = []
+            return
+        
+        boundary_points.sort(key=lambda p: p[0])
+        
+        x_coords = [p[0] for p in boundary_points]
+        y_coords = [p[1] for p in boundary_points]
+        
+        try:
+            min_x, max_x = min(x_coords), max(x_coords)
+            x_range = np.arange(min_x, max_x + 1, 1)
+            f = interp1d(x_coords, y_coords, kind='linear', fill_value='extrapolate')
+            y_interpolated = f(x_range).astype(int)
+            
+            self.result.boundary_line = [(int(x), int(y)) for x, y in zip(x_range, y_interpolated)]
+        except Exception as e:
+            logger.warning(f"Failed to interpolate boundary line: {e}")
+            self.result.boundary_line = boundary_points
+    
+    def _draw_boundary_line(self, image: np.ndarray):
+        if not self.result.boundary_line:
+            return
+        
+        boundary_color = (0, 255, 255)
+        
+        for i in range(len(self.result.boundary_line) - 1):
+            pt1 = self.result.boundary_line[i]
+            pt2 = self.result.boundary_line[i + 1]
+            cv2.line(image, pt1, pt2, boundary_color, 2)
     
     def batch_detect(self, images: List[np.ndarray]) -> List[DetectionResult]:
         results = []
