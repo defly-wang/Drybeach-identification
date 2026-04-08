@@ -2,8 +2,6 @@ import cv2
 import numpy as np
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict
-from scipy import ndimage
-from sklearn.cluster import DBSCAN
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -78,24 +76,34 @@ class BoundaryLineGenerator:
     
     @staticmethod
     def _cluster_points(points: np.ndarray) -> List[np.ndarray]:
-        if len(points) < 10:
+        if len(points) < 5:
             return [points]
         
-        try:
-            from sklearn.cluster import DBSCAN
-            clustering = DBSCAN(eps=20, min_samples=3).fit(points)
-            labels = clustering.labels_
-            
-            clusters = []
-            for label in set(labels):
-                if label == -1:
-                    continue
-                cluster = points[labels == label]
-                clusters.append(cluster)
-        except ImportError:
-            clusters = [points]
+        clusters = []
+        used = np.zeros(len(points), dtype=bool)
+        eps = 25
         
-        clusters.sort(key=lambda c: np.median(c[:, 1]))
+        for i in range(len(points)):
+            if used[i]:
+                continue
+            
+            cluster = [i]
+            used[i] = True
+            
+            queue = [i]
+            while queue:
+                idx = queue.pop(0)
+                for j in range(len(points)):
+                    if not used[j]:
+                        dist = np.sqrt(np.sum((points[idx] - points[j]) ** 2))
+                        if dist < eps:
+                            queue.append(j)
+                            cluster.append(j)
+                            used[j] = True
+            
+            clusters.append(points[cluster])
+        
+        clusters.sort(key=lambda c: np.median(c[:, 1]) if len(c) > 0 else 0)
         
         return clusters
     
