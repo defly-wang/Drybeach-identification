@@ -1,11 +1,13 @@
 from pathlib import Path
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-                             QFileDialog, QComboBox, QSpinBox, QProgressBar, QTextEdit)
+                             QFileDialog, QComboBox, QSpinBox, QProgressBar, QTextEdit,
+                             QGroupBox)
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtGui import QTextCursor
 
 import cv2
+import numpy as np
 
 
 class DetectionTab(QWidget):
@@ -105,6 +107,55 @@ class DetectionTab(QWidget):
         self.btn_draw_boundary.clicked.connect(self.draw_boundary_line)
         self.btn_draw_boundary.setEnabled(False)
         layout.addWidget(self.btn_draw_boundary)
+        
+        boundary_group = QGroupBox("分界线类型")
+        boundary_layout = QVBoxLayout()
+        
+        type_layout = QHBoxLayout()
+        type_layout.addWidget(QLabel("线型:"))
+        self.cmb_boundary_type = QComboBox()
+        self.cmb_boundary_type.addItems(["直线", "环形", "半环形"])
+        self.cmb_boundary_type.setCurrentText("直线")
+        type_layout.addWidget(self.cmb_boundary_type)
+        boundary_layout.addLayout(type_layout)
+        
+        circle_params = QHBoxLayout()
+        circle_params.addWidget(QLabel("中心X:"))
+        self.spin_center_x = QSpinBox()
+        self.spin_center_x.setRange(0, 10000)
+        self.spin_center_x.setValue(0)
+        circle_params.addWidget(self.spin_center_x)
+        
+        circle_params.addWidget(QLabel("Y:"))
+        self.spin_center_y = QSpinBox()
+        self.spin_center_y.setRange(0, 10000)
+        self.spin_center_y.setValue(0)
+        circle_params.addWidget(self.spin_center_y)
+        
+        circle_params.addWidget(QLabel("半径:"))
+        self.spin_radius = QSpinBox()
+        self.spin_radius.setRange(10, 5000)
+        self.spin_radius.setValue(100)
+        circle_params.addWidget(self.spin_radius)
+        boundary_layout.addLayout(circle_params)
+        
+        self.lbl_boundary_info = QLabel("提示: 直线模式点击两点画线，环形/半环形输入参数")
+        self.lbl_boundary_info.setStyleSheet("color: #888; font-size: 10px;")
+        self.lbl_boundary_info.setWordWrap(True)
+        boundary_layout.addWidget(self.lbl_boundary_info)
+        
+        self.btn_apply_boundary = QPushButton("应用分界线")
+        self.btn_apply_boundary.clicked.connect(self.apply_boundary_line)
+        self.btn_apply_boundary.setEnabled(False)
+        boundary_layout.addWidget(self.btn_apply_boundary)
+        
+        self.btn_clear_boundary = QPushButton("清除分界线")
+        self.btn_clear_boundary.clicked.connect(self.clear_boundary_line)
+        self.btn_clear_boundary.setEnabled(False)
+        boundary_layout.addWidget(self.btn_clear_boundary)
+        
+        boundary_group.setLayout(boundary_layout)
+        layout.addWidget(boundary_group)
         
         layout.addStretch()
         self.setLayout(layout)
@@ -258,11 +309,14 @@ class DetectionTab(QWidget):
         self.btn_run_detection.setEnabled(True)
         
         if annotated_image is not None:
-            self.annotated_image = annotated_image
+            self.annotated_image = annotated_image.copy()
+            self.original_result = annotated_image.copy()
             count_text = " | ".join([f"{k}: {v}" for k, v in class_counts.items()])
             self.lbl_detect_result.setText(count_text)
             self.btn_save_result.setEnabled(True)
             self.btn_draw_boundary.setEnabled(True)
+            self.btn_apply_boundary.setEnabled(True)
+            self.btn_clear_boundary.setEnabled(False)
             self.result_ready.emit(annotated_image)
     
     def save_result(self):
@@ -294,6 +348,53 @@ class DetectionTab(QWidget):
         if image_with_boundary is not None:
             self.annotated_image = image_with_boundary
             self.result_ready.emit(image_with_boundary)
+    
+    def apply_boundary_line(self):
+        if not hasattr(self, 'annotated_image') or self.annotated_image is None:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "警告", "请先进行识别")
+            return
+        
+        boundary_type = self.cmb_boundary_type.currentText()
+        center_x = self.spin_center_x.value()
+        center_y = self.spin_center_y.value()
+        radius = self.spin_radius.value()
+        
+        result = self.annotated_image.copy()
+        h, w = result.shape[:2]
+        
+        if center_x == 0 and center_y == 0:
+            center_x = w // 2
+            center_y = h // 2
+            self.spin_center_x.setValue(center_x)
+            self.spin_center_y.setValue(center_y)
+        
+        if radius == 100:
+            radius = min(w, h) // 3
+            self.spin_radius.setValue(radius)
+        
+        if boundary_type == "环形":
+            cv2.circle(result, (center_x, center_y), radius, (0, 255, 0), 2)
+            cv2.circle(result, (center_x, center_y), 3, (0, 255, 0), -1)
+            self.lbl_boundary_info.setText(f"已绘制环形: 中心({center_x},{center_y}) 半径{radius}")
+        
+        elif boundary_type == "半环形":
+            angle_start = 180
+            angle_end = 360
+            axes = (radius, radius)
+            cv2.ellipse(result, (center_x, center_y), axes, 0, angle_start, angle_end, (0, 255, 0), 2)
+            cv2.circle(result, (center_x, center_y), 3, (0, 255, 0), -1)
+            self.lbl_boundary_info.setText(f"已绘制半环形: 中心({center_x},{center_y}) 半径{radius}")
+        
+        self.annotated_image = result
+        self.result_ready.emit(result)
+    
+    def clear_boundary_line(self):
+        if hasattr(self, 'original_result'):
+            self.annotated_image = self.original_result.copy()
+            self.result_ready.emit(self.annotated_image)
+            self.btn_clear_boundary.setEnabled(False)
+        self.lbl_boundary_info.setText("提示: 直线模式点击两点画线，环形/半环形输入参数")
     
     image_loaded = pyqtSignal(str)
     result_ready = pyqtSignal(object)
