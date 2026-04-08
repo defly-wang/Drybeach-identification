@@ -47,193 +47,80 @@ class BoundaryLineGenerator:
         boundary_points = [p for p in detection_points if p['class_id'] == BoundaryLineGenerator.BOUNDARY_CLASS_ID]
         
         if len(boundary_points) < 3:
-            boundary_points = [p for p in detection_points if p['class_id'] == 0]
-        
-        if len(boundary_points) < 3:
             logger.warning("Not enough boundary points to generate lines")
             return []
         
-        points = np.array([[p['x'], p['y']] for p in boundary_points])
-        
-        clusters = BoundaryLineGenerator._cluster_points(points)
-        
         boundary_lines = []
-        for cluster in clusters:
-            if len(cluster) < 3:
+        
+        point_mask = np.zeros((img_h, img_w), dtype=np.uint8)
+        for p in boundary_points:
+            x, y = int(p['x']), int(p['y'])
+            if 0 <= x < img_w and 0 <= y < img_h:
+                cv2.circle(point_mask, (x, y), 2, 255, -1)
+        
+        contours, _ = cv2.findContours(point_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        for i, contour in enumerate(contours):
+            if len(contour) < 3:
                 continue
             
-            line_type, center_line = BoundaryLineGenerator._fit_curve(cluster)
+            points = contour.squeeze()
+            if len(points.shape) == 1:
+                continue
             
-            if center_line is not None and len(center_line) > 2:
-                boundary_lines.append({
-                    'type': line_type,
-                    'points': center_line.tolist() if isinstance(center_line, np.ndarray) else center_line,
-                    'num_points': len(boundary_points)
-                })
+            points_list = [[int(p[0]), int(p[1])] for p in points]
+            
+            sorted_points = BoundaryLineGenerator._sort_points_by_direction(points_list)
+            
+            smooth_points = BoundaryLineGenerator._smooth_contour(sorted_points)
+            
+            boundary_lines.append({
+                'type': 'contour',
+                'points': smooth_points,
+                'num_points': len(contour)
+            })
         
-        logger.info(f"Generated {len(boundary_lines)} boundary lines from {len(boundary_points)} points")
+        logger.info(f"Generated {len(boundary_lines)} contour lines from {len(boundary_points)} boundary points")
         return boundary_lines
     
     @staticmethod
-    def _cluster_points(points: np.ndarray) -> List[np.ndarray]:
-        if len(points) < 5:
-            return [points]
+    def _sort_points_by_direction(points: List[List[int]]) -> List[List[int]]:
+        if len(points) < 3:
+            return points
         
-        clusters = []
-        used = np.zeros(len(points), dtype=bool)
-        eps = 25
+        points = np.array(points)
         
-        for i in range(len(points)):
-            if used[i]:
-                continue
-            
-            cluster = [i]
-            used[i] = True
-            
-            queue = [i]
-            while queue:
-                idx = queue.pop(0)
-                for j in range(len(points)):
-                    if not used[j]:
-                        dist = np.sqrt(np.sum((points[idx] - points[j]) ** 2))
-                        if dist < eps:
-                            queue.append(j)
-                            cluster.append(j)
-                            used[j] = True
-            
-            clusters.append(points[cluster])
+        x_range = np.max(points[:, 0]) - np.min(points[:, 0])
+        y_range = np.max(points[:, 1]) - np.min(points[:, 1])
         
-        clusters.sort(key=lambda c: np.median(c[:, 1]) if len(c) > 0 else 0)
-        
-        return clusters
-    
-    @staticmethod
-    def _fit_curve(points: np.ndarray) -> Tuple[str, np.ndarray]:
-        sorted_indices = np.argsort(points[:, 1])
-        sorted_points = points[sorted_indices]
-        
-        x_coords = sorted_points[:, 0].astype(float)
-        y_coords = sorted_points[:, 1].astype(float)
-        
-        x_range = np.max(x_coords) - np.min(x_coords)
-        y_range = np.max(y_coords) - np.min(y_coords)
-        
-        if y_range > x_range * 2:
-            line_type, center_line = BoundaryLineGenerator._fit_vertical_curve(sorted_points)
-        elif x_range > y_range * 2:
-            line_type, center_line = BoundaryLineGenerator._fit_horizontal_curve(sorted_points)
+        if x_range > y_range * 1.5:
+            sorted_indices = np.argsort(points[:, 0])
+        elif y_range > x_range * 1.5:
+            sorted_indices = np.argsort(points[:, 1])
         else:
-            line_type, center_line = BoundaryLineGenerator._detect_arc(sorted_points)
+            center = np.mean(points, axis=0)
+            angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
+            sorted_indices = np.argsort(angles)
         
-        if center_line is None or len(center_line) < 2:
-            line_type = "linear"
-            center_line = BoundaryLineGenerator._fit_polynomial_curve(sorted_points, degree=1)
-        
-        return line_type, center_line
+        return points[sorted_indices].tolist()
     
     @staticmethod
-    def _fit_horizontal_curve(points: np.ndarray) -> Tuple[str, np.ndarray]:
-        sorted_indices = np.argsort(points[:, 1])
-        sorted_points = points[sorted_indices]
+    def _smooth_contour(points: List[List[int]], smoothness: int = 3) -> List[List[int]]:
+        if len(points) < smoothness * 2:
+            return points
         
-        x = sorted_points[:, 0].astype(float)
-        y = sorted_points[:, 1].astype(float)
+        smoothed = []
+        n = len(points)
         
-        coeffs = np.polyfit(y, x, 2)
+        for i in range(n):
+            start_idx = max(0, i - smoothness)
+            end_idx = min(n, i + smoothness + 1)
+            neighbors = points[start_idx:end_idx]
+            avg_x = int(np.mean([p[0] for p in neighbors]))
+            avg_y = int(np.mean([p[1] for p in neighbors]))
+            smoothed.append([avg_x, avg_y])
         
-        y_new = np.linspace(np.min(y), np.max(y), 50)
-        x_new = np.polyval(coeffs, y_new)
-        
-        center_line = np.column_stack((x_new, y_new)).astype(int)
-        
-        return "horizontal_curve", center_line
-    
-    @staticmethod
-    def _fit_vertical_curve(points: np.ndarray) -> Tuple[str, np.ndarray]:
-        sorted_indices = np.argsort(points[:, 0])
-        sorted_points = points[sorted_indices]
-        
-        x = sorted_points[:, 0].astype(float)
-        y = sorted_points[:, 1].astype(float)
-        
-        coeffs = np.polyfit(x, y, 2)
-        
-        x_new = np.linspace(np.min(x), np.max(x), 50)
-        y_new = np.polyval(coeffs, x_new)
-        
-        center_line = np.column_stack((x_new, y_new)).astype(int)
-        
-        return "vertical_curve", center_line
-    
-    @staticmethod
-    def _detect_arc(points: np.ndarray) -> Tuple[str, np.ndarray]:
-        center = np.mean(points, axis=0)
-        distances = np.sqrt(np.sum((points - center) ** 2, axis=1))
-        
-        dist_std = np.std(distances)
-        dist_mean = np.mean(distances)
-        
-        if dist_std < dist_mean * 0.15 and len(points) > 10:
-            return BoundaryLineGenerator._fit_circle(points, center, dist_mean)
-        
-        return "polynomial", BoundaryLineGenerator._fit_polynomial_curve(points, degree=2)
-    
-    @staticmethod
-    def _fit_circle(points: np.ndarray, center: np.ndarray, radius: float) -> Tuple[str, np.ndarray]:
-        angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
-        sorted_indices = np.argsort(angles)
-        sorted_angles = angles[sorted_indices]
-        
-        angle_range = np.max(sorted_angles) - np.min(sorted_angles)
-        
-        if angle_range < np.pi * 0.6:
-            line_type = "arc"
-            angle_start = sorted_angles.min()
-            angle_end = sorted_angles.max()
-        else:
-            line_type = "circle"
-            angle_start = 0
-            angle_end = 2 * np.pi
-        
-        num_points = max(50, int(angle_range * 50 / np.pi))
-        angles_new = np.linspace(angle_start, angle_end, num_points)
-        
-        x_new = center[0] + radius * np.cos(angles_new)
-        y_new = center[1] + radius * np.sin(angles_new)
-        
-        center_line = np.column_stack((x_new, y_new)).astype(int)
-        
-        return line_type, center_line
-    
-    @staticmethod
-    def _fit_polynomial_curve(points: np.ndarray, degree: int = 2) -> np.ndarray:
-        if len(points) < degree + 1:
-            degree = 1
-        
-        x = points[:, 0].astype(float)
-        y = points[:, 1].astype(float)
-        
-        sorted_indices = np.argsort(x)
-        sorted_points = points[sorted_indices]
-        
-        x_sorted = sorted_points[:, 0].astype(float)
-        y_sorted = sorted_points[:, 1].astype(float)
-        
-        try:
-            if degree == 1:
-                coeffs = np.polyfit(x_sorted, y_sorted, 1)
-                x_new = np.linspace(x_sorted.min(), x_sorted.max(), 50)
-                y_new = np.polyval(coeffs, x_new)
-            else:
-                coeffs_x = np.polyfit(y_sorted, x_sorted, min(degree, len(x_sorted) - 1))
-                y_new = np.linspace(y_sorted.min(), y_sorted.max(), 50)
-                x_new = np.polyval(coeffs_x, y_new)
-            
-            center_line = np.column_stack((x_new, y_new)).astype(int)
-        except:
-            center_line = sorted_points[::max(1, len(sorted_points) // 50)]
-        
-        return center_line
+        return smoothed
     
     @staticmethod
     def draw_boundary_lines(image: np.ndarray, boundary_lines: List[Dict], 
