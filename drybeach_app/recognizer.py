@@ -109,24 +109,55 @@ class BoundaryLineGenerator:
         if len(points) < 3:
             return points.tolist()
         
-        pts = points.astype(np.float32)
-        
-        hull = cv2.convexHull(pts)
-        
-        if hull is None or len(hull) < 3:
-            return points.tolist()
-        
-        hull_points = hull.squeeze()
-        
-        if len(hull_points.shape) == 1:
-            return points.tolist()
-        
-        contour = [[int(p[0]), int(p[1])] for p in hull_points]
+        contour = BoundaryLineGenerator._order_points_nn(points)
         
         if len(contour) > 1:
             contour.append(contour[0])
         
         return contour
+    
+    @staticmethod
+    def _order_points_nn(points: np.ndarray) -> List[List[int]]:
+        n = len(points)
+        if n < 3:
+            return [[int(p[0]), int(p[1])] for p in points]
+        
+        pts_list = [[float(p[0]), float(p[1])] for p in points]
+        
+        ordered = [pts_list[0]]
+        remaining = set(range(1, n))
+        
+        current = pts_list[0]
+        max_dist = 0
+        
+        for i in range(1, n):
+            d = np.sqrt((current[0] - pts_list[i][0])**2 + (current[1] - pts_list[i][1])**2)
+            if d > max_dist:
+                max_dist = d
+                farthest = pts_list[i]
+        
+        ordered.append(farthest)
+        remaining.discard(list(pts_list).index(farthest))
+        
+        current = farthest
+        while remaining:
+            min_next = float('inf')
+            next_pt = None
+            next_idx = None
+            
+            for j in remaining:
+                d = np.sqrt((current[0] - pts_list[j][0])**2 + (current[1] - pts_list[j][1])**2)
+                if d < min_next:
+                    min_next = d
+                    next_pt = pts_list[j]
+                    next_idx = j
+            
+            if next_pt:
+                ordered.append(next_pt)
+                remaining.discard(next_idx)
+                current = next_pt
+        
+        return [[int(p[0]), int(p[1])] for p in ordered]
     
     @staticmethod
     def draw_boundary_lines(image: np.ndarray, boundary_lines: List[Dict], 
