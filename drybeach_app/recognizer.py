@@ -107,78 +107,112 @@ class BoundaryLineGenerator:
     
     @staticmethod
     def _compute_center_line(points: np.ndarray) -> List[List[int]]:
+        if len(points) < 3:
+            return [[int(p[0]), int(p[1])] for p in points]
+        
+        pts = points.astype(float)
+        
+        x_range = np.max(pts[:, 0]) - np.min(pts[:, 0])
+        y_range = np.max(pts[:, 1]) - np.min(pts[:, 1])
+        
+        if x_range > y_range * 1.5:
+            return BoundaryLineGenerator._trace_path_horizontal(pts)
+        elif y_range > x_range * 1.5:
+            return BoundaryLineGenerator._trace_path_vertical(pts)
+        else:
+            return BoundaryLineGenerator._trace_path_general(pts)
+    
+    @staticmethod
+    def _trace_path_horizontal(points: np.ndarray) -> List[List[int]]:
+        x_min, x_max = np.min(points[:, 0]), np.max(points[:, 0])
+        
+        path = []
+        step = max(1, int((x_max - x_min) / 50))
+        
+        current_x = x_min
+        while current_x <= x_max:
+            nearby = points[(points[:, 0] >= current_x - step) & (points[:, 0] <= current_x + step)]
+            
+            if len(nearby) > 0:
+                cx = int(np.mean(nearby[:, 0]))
+                cy = int(np.median(nearby[:, 1]))
+                path.append([cx, cy])
+            
+            current_x += step
+        
+        if len(path) < 2:
+            path = [[int(p[0]), int(p[1])] for p in points]
+        
+        return BoundaryLineGenerator._smooth_line(path)
+    
+    @staticmethod
+    def _trace_path_vertical(points: np.ndarray) -> List[List[int]]:
+        y_min, y_max = np.min(points[:, 1]), np.max(points[:, 1])
+        
+        path = []
+        step = max(1, int((y_max - y_min) / 50))
+        
+        current_y = y_min
+        while current_y <= y_max:
+            nearby = points[(points[:, 1] >= current_y - step) & (points[:, 1] <= current_y + step)]
+            
+            if len(nearby) > 0:
+                cx = int(np.median(nearby[:, 0]))
+                cy = int(np.mean(nearby[:, 1]))
+                path.append([cx, cy])
+            
+            current_y += step
+        
+        if len(path) < 2:
+            path = [[int(p[0]), int(p[1])] for p in points]
+        
+        return BoundaryLineGenerator._smooth_line(path)
+    
+    @staticmethod
+    def _trace_path_general(points: np.ndarray) -> List[List[int]]:
         x_range = np.max(points[:, 0]) - np.min(points[:, 0])
         y_range = np.max(points[:, 1]) - np.min(points[:, 1])
         
-        if x_range > y_range * 1.5:
-            return BoundaryLineGenerator._center_line_horizontal(points)
-        elif y_range > x_range * 1.5:
-            return BoundaryLineGenerator._center_line_vertical(points)
+        if x_range > y_range:
+            sorted_idx = np.argsort(points[:, 0])
         else:
-            return BoundaryLineGenerator._center_line_general(points)
+            sorted_idx = np.argsort(points[:, 1])
+        
+        sorted_pts = points[sorted_idx]
+        
+        path = []
+        window_size = max(3, len(sorted_pts) // 30)
+        
+        for i in range(0, len(sorted_pts), window_size // 2):
+            window = sorted_pts[max(0, i-window_size//2):min(len(sorted_pts), i+window_size//2+1)]
+            if len(window) > 0:
+                cx = int(np.median(window[:, 0]))
+                cy = int(np.median(window[:, 1]))
+                path.append([cx, cy])
+        
+        if len(path) < 2:
+            path = [[int(p[0]), int(p[1])] for p in sorted_pts]
+        
+        return BoundaryLineGenerator._smooth_line(path)
     
     @staticmethod
-    def _center_line_horizontal(points: np.ndarray) -> List[List[int]]:
-        bins = {}
-        for p in points:
-            x_bin = int(p[0])
-            if x_bin not in bins:
-                bins[x_bin] = []
-            bins[x_bin].append(p[1])
+    def _smooth_line(line: List[List[int]], window: int = 3) -> List[List[int]]:
+        if len(line) < window:
+            return line
         
-        center_line = []
-        for x in sorted(bins.keys()):
-            y_median = int(np.median(bins[x]))
-            center_line.append([x, y_median])
+        smoothed = []
+        n = len(line)
         
-        if len(center_line) < 2:
-            return [[int(p[0]), int(p[1])] for p in points]
+        for i in range(n):
+            start = max(0, i - window // 2)
+            end = min(n, i + window // 2 + 1)
+            
+            neighbors = line[start:end]
+            avg_x = int(np.mean([p[0] for p in neighbors]))
+            avg_y = int(np.mean([p[1] for p in neighbors]))
+            smoothed.append([avg_x, avg_y])
         
-        return center_line
-    
-    @staticmethod
-    def _center_line_vertical(points: np.ndarray) -> List[List[int]]:
-        bins = {}
-        for p in points:
-            y_bin = int(p[1])
-            if y_bin not in bins:
-                bins[y_bin] = []
-            bins[y_bin].append(p[0])
-        
-        center_line = []
-        for y in sorted(bins.keys()):
-            x_median = int(np.median(bins[y]))
-            center_line.append([x_median, y])
-        
-        if len(center_line) < 2:
-            return [[int(p[0]), int(p[1])] for p in points]
-        
-        return center_line
-    
-    @staticmethod
-    def _center_line_general(points: np.ndarray) -> List[List[int]]:
-        center = np.mean(points, axis=0)
-        
-        angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
-        
-        sorted_indices = np.argsort(angles)
-        sorted_points = points[sorted_indices]
-        
-        n = len(sorted_points)
-        k = max(3, n // 20)
-        
-        center_line = []
-        for i in range(0, n, k):
-            window = sorted_points[max(0, i-k):min(n, i+k+1)]
-            cx = int(np.median(window[:, 0]))
-            cy = int(np.median(window[:, 1]))
-            center_line.append([cx, cy])
-        
-        if len(center_line) < 2:
-            sorted_x = sorted_points[np.argsort(sorted_points[:, 0])]
-            center_line = [[int(p[0]), int(p[1])] for p in sorted_x]
-        
-        return center_line
+        return smoothed
     
     @staticmethod
     def draw_boundary_lines(image: np.ndarray, boundary_lines: List[Dict], 
