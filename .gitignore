@@ -3,6 +3,7 @@
 /models
 /outputs
 /venv
+/.venv
 env
 
 # Python cache
