@@ -548,57 +548,160 @@ class DryBeachRecognizer:
         self.result.boundary_lines = []
         
         for cluster in clusters:
-            cluster.sort(key=lambda p: p[0])
+            line = self._interpolate_parametric(cluster)
+            if line:
+                self.result.boundary_lines.append(line)
+    
+    def _interpolate_parametric(self, points: List[Tuple]) -> List[Tuple[int, int]]:
+        if len(points) < 2:
+            return points
+        
+        sorted_pts = sorted(points, key=lambda p: p[0])
+        
+        x_coords = [p[0] for p in sorted_pts]
+        y_coords = [p[1] for p in sorted_pts]
+        
+        segments = self._split_into_segments(x_coords, y_coords)
+        
+        logger.info(f"将点分为 {len(segments)} 个段处理")
+        
+        all_lines = []
+        for i, seg in enumerate(segments):
+            seg_x = [p[0] for p in seg]
+            seg_y = [p[1] for p in seg]
             
-            x_coords = [p[0] for p in cluster]
-            y_coords = [p[1] for p in cluster]
+            line = self._fit_segment(seg_x, seg_y)
+            all_lines.append(line)
+        
+        connected = self._connect_segments(all_lines)
+        
+        connected = BoundaryLineGenerator._smooth_line(connected)
+        
+        logger.info(f"生成分界线: {len(connected)} 个点")
+        return connected
+    
+    def _split_into_segments(self, x_coords: List, y_coords: List) -> List[List[Tuple]]:
+        if len(x_coords) < 4:
+            return [[(x, y) for x, y in zip(x_coords, y_coords)]]
+        
+        points = [(x, y) for x, y in zip(x_coords, y_coords)]
+        
+        angles = []
+        for i in range(1, len(points) - 1):
+            dx1 = points[i][0] - points[i-1][0]
+            dy1 = points[i][1] - points[i-1][1]
+            dx2 = points[i+1][0] - points[i][0]
+            dy2 = points[i+1][1] - points[i][1]
             
-            if len(x_coords) < 2:
-                self.result.boundary_lines.append(cluster)
+            angle1 = np.arctan2(dy1, dx1) if (dx1 != 0 or dy1 != 0) else 0
+            angle2 = np.arctan2(dy2, dx2) if (dx2 != 0 or dy2 != 0) else 0
+            
+            angle_diff = abs(angle2 - angle1)
+            if angle_diff > np.pi:
+                angle_diff = 2 * np.pi - angle_diff
+            
+            angles.append((i, angle_diff, angle1, angle2))
+        
+        angle_threshold = np.pi / 6
+        
+        split_indices = [0]
+        for i, angle_diff, _, _ in angles:
+            if angle_diff > angle_threshold:
+                split_indices.append(i + 1)
+        split_indices.append(len(points))
+        
+        split_indices = sorted(set(split_indices))
+        
+        segments = []
+        for i in range(len(split_indices) - 1):
+            start = split_indices[i]
+            end = split_indices[i + 1]
+            if end - start >= 1:
+                segments.append(points[start:end])
+        
+        if not segments:
+            segments = [points]
+        
+        return segments
+    
+    def _fit_segment(self, x_coords: List, y_coords: List) -> List[Tuple[int, int]]:
+        if len(x_coords) < 2:
+            return [(int(x), int(y)) for x, y in zip(x_coords, y_coords)]
+        
+        try:
+            x_range = max(x_coords) - min(x_coords)
+            y_range = max(y_coords) - min(y_coords)
+            
+            if x_range > y_range * 2:
+                coeffs = np.polyfit(x_coords, y_coords, 1)
+                x_new = np.linspace(min(x_coords), max(x_coords), max(10, len(x_coords)))
+                y_new = coeffs[0] * x_new + coeffs[1]
+                return [(int(x), int(y)) for x, y in zip(x_new, y_new)]
+            elif y_range > x_range * 2:
+                coeffs = np.polyfit(y_coords, x_coords, 1)
+                y_new = np.linspace(min(y_coords), max(y_coords), max(10, len(y_coords)))
+                x_new = coeffs[0] * y_new + coeffs[1]
+                return [(int(x), int(y)) for x, y in zip(x_new, y_new)]
+            else:
+                from scipy.interpolate import interp1d
+                
+                distances = [0.0]
+                for i in range(1, len(x_coords)):
+                    dist = np.sqrt((x_coords[i] - x_coords[i-1])**2 + (y_coords[i] - y_coords[i-1])**2)
+                    distances.append(distances[-1] + dist)
+                
+                if distances[-1] == 0:
+                    return [(int(x), int(y)) for x, y in zip(x_coords, y_coords)]
+                
+                t = np.array(distances) / distances[-1]
+                num_output = max(10, len(x_coords))
+                t_new = np.linspace(0, 1, num_output)
+                
+                kind = 'cubic' if len(x_coords) >= 4 else 'linear'
+                fx = interp1d(t, x_coords, kind=kind, fill_value='extrapolate')
+                fy = interp1d(t, y_coords, kind=kind, fill_value='extrapolate')
+                
+                x_new = fx(t_new)
+                y_new = fy(t_new)
+                
+                return [(int(round(x)), int(round(y))) for x, y in zip(x_new, y_new)]
+                
+        except Exception as e:
+            logger.warning(f"分段拟合失败: {e}")
+            return [(int(x), int(y)) for x, y in zip(x_coords, y_coords)]
+    
+    def _connect_segments(self, segments: List[List[Tuple]]) -> List[Tuple[int, int]]:
+        if not segments:
+            return []
+        if len(segments) == 1:
+            return segments[0]
+        
+        connected = list(segments[0])
+        
+        for i in range(1, len(segments)):
+            seg = segments[i]
+            
+            if not connected or not seg:
                 continue
             
-            try:
-                from scipy.interpolate import UnivariateSpline
-                
-                head_count = min(5, len(x_coords) // 3)
-                tail_count = min(5, len(x_coords) // 3)
-                
-                head_x = x_coords[:head_count]
-                head_y = y_coords[:head_count]
-                tail_x = x_coords[-tail_count:]
-                tail_y = y_coords[-tail_count:]
-                
-                head_coeffs = np.polyfit(head_x, head_y, 1)
-                tail_coeffs = np.polyfit(tail_x, tail_y, 1)
-                
-                min_x = min(x_coords)
-                max_x = max(x_coords)
-                
-                head_trend_y = head_coeffs[0] * min_x + head_coeffs[1]
-                tail_trend_y = tail_coeffs[0] * max_x + tail_coeffs[1]
-                
-                start_x = min_x
-                end_x = max_x
-                
-                unique_x = sorted(set(x_coords))
-                if len(unique_x) < 4:
-                    k = len(unique_x) - 1
-                else:
-                    k = 3
-                k = min(k, len(x_coords) - 1)
-                
-                spline = UnivariateSpline(x_coords, y_coords, k=k, s=0)
-                
-                x_range = np.arange(start_x, end_x + 1, 1)
-                y_interpolated = spline(x_range).astype(int)
-                
-                line = [(int(x), int(max(0, y))) for x, y in zip(x_range, y_interpolated)]
-                self.result.boundary_lines.append(line)
-                
-                logger.info(f"生成分界线: {len(line)} 个点, 起点({start_x},{int(head_trend_y)}), 终点({end_x},{int(tail_trend_y)})")
-            except Exception as e:
-                logger.warning(f"Failed to interpolate boundary line: {e}")
-                self.result.boundary_lines.append(cluster)
+            last_pt = connected[-1]
+            first_pt = seg[0]
+            
+            dx = first_pt[0] - last_pt[0]
+            dy = first_pt[1] - last_pt[1]
+            dist = np.sqrt(dx**2 + dy**2)
+            
+            if dist > 5:
+                steps = max(1, int(dist / 5))
+                for j in range(1, steps):
+                    t = j / steps
+                    interp_x = int(last_pt[0] + dx * t)
+                    interp_y = int(last_pt[1] + dy * t)
+                    connected.append((interp_x, interp_y))
+            
+            connected.extend(seg)
+        
+        return connected
     
     def _draw_boundary_line(self, image: np.ndarray):
         if not hasattr(self.result, 'boundary_lines') or not self.result.boundary_lines:
