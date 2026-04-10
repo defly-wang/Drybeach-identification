@@ -141,12 +141,12 @@ class ProcessingThread(QThread):
         for img_path, cat_idx in train_files:
             self._copy_and_label(img_path, cat_idx, train_img_dir, train_lbl_dir)
             processed += 1
-            self.progress_updated.emit(int(processed / total * 50))
+            self.progress_updated.emit(int(processed / total * 20))
         
         for img_path, cat_idx in val_files:
             self._copy_and_label(img_path, cat_idx, val_img_dir, val_lbl_dir)
             processed += 1
-            self.progress_updated.emit(int(processed / total * 50))
+            self.progress_updated.emit(int(processed / total * 20))
         
         config_path = temp_dataset / 'data.yaml'
         config_content = f"""path: {temp_dataset}
@@ -167,7 +167,7 @@ names: {class_names}
         resume_model_path = self.params.get('resume_model_path')
         
         def progress_callback(pct):
-            self.progress_updated.emit(pct)
+            self.progress_updated.emit(int(pct * 0.8 + 20))
         
         model_path = trainer.train_classification_model(
             data_path=data_path,
