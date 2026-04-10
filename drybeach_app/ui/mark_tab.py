@@ -245,10 +245,6 @@ class MarkSegmentationWidget(QWidget):
         layout.addLayout(tool_layout)
         
         class_layout = QHBoxLayout()
-        
-        layout.addLayout(tool_layout)
-        
-        class_layout = QHBoxLayout()
         class_layout.addWidget(QLabel("类别:"))
         
         self.btn_water = QPushButton("水面")
