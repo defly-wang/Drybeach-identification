@@ -1,19 +1,3 @@
-#!/bin/bash
-# 打包脚本 - 使用 PyInstaller 将干滩识别系统打包为可执行文件
-
-# 确保在项目根目录
-cd "$(dirname "$0")"
-
-echo "开始打包干滩识别系统..."
-
-# 检查并安装依赖
-if ! command -v pyinstaller &> /dev/null; then
-    echo "安装 PyInstaller..."
-    pip install pyinstaller
-fi
-
-# 创建 spec 文件
-cat > drybeach.spec << 'EOF'
 # -*- mode: python ; coding: utf-8 -*-
 
 block_cipher = None
@@ -80,17 +64,3 @@ coll = COLLECT(
     upx_exclude=[],
     name='DryBeachIdentification',
 )
-EOF
-
-echo "创建 PyInstaller spec 文件完成"
-
-# 执行打包
-echo "开始打包..."
-pyinstaller drybeach.spec --clean
-
-# 清理临时文件
-echo "清理临时文件..."
-rm -f drybeach.spec
-
-echo "打包完成！"
-echo "输出目录: dist/DryBeachIdentification"
