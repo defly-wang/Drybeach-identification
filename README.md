@@ -6,6 +6,9 @@
 
 - **视频帧提取**: 从视频文件按指定间隔截取图片
 - **标记分割**: 标注水面、滩面、分界线、坝体区域，支持多种标注工具
+  - 面标记: 绘制多边形区域
+  - 线标记: 绘制线段并自动转换为带状区域（支持16/24/32/40/48/64像素宽度）
+  - 移动工具: 拖动查看大图
 - **模型训练**: 使用YOLO模型训练，支持water/beach/boundary/dam四分类
 - **滑动窗口识别**: 基于训练好的模型对图像进行区域分类
 - **结果可视化**: 彩色叠加显示各类别区域
@@ -20,16 +23,15 @@ Drybeach-identification/
 │   │   ├── main_window.py     # 主窗口
 │   │   ├── mark_tab.py        # 标记分割标签页
 │   │   ├── video_tab.py       # 视频提取标签页
+│   │   ├── training_tab.py    # 模型训练标签页
 │   │   ├── threads.py         # 后台处理线程
 │   │   └── viewers.py         # 图像显示组件
 │   ├── recognizer.py          # YOLO识别模块
 │   ├── model_trainer.py       # 模型训练模块
 │   └── video_capture.py       # 视频帧提取
-├── data/                      # 数据目录
-├── models/                    # 模型存储
-├── outputs/                   # 输出结果
+├── config/                    # 配置文件
 ├── main.py                    # 主程序入口
-└── requirements.txt           # 依赖列表
+└── README.md                  # 说明文档
 ```
 
 ## 安装
@@ -50,7 +52,7 @@ python main.py gui
 
 #### 训练模型
 ```bash
-python main.py train --data data/training --epochs 100 --output models/
+python main.py train --data data/training --epochs 5 --output models/
 ```
 
 ## GUI使用说明
@@ -59,12 +61,12 @@ python main.py train --data data/training --epochs 100 --output models/
 
 1. **视频提取**: 从视频文件中提取帧图片
 2. **标记分割**: 标注图像中的各类区域
-   - 支持多边形、线段、矩形、点标注
-   - 分类目录: water(水面)、beach(滩面)、boundary(分界线)、dam(坝体)
+   - 工具按钮: 打开图片/保存区域/导入区域/清空 + 移动图片/面标记/线标记 + 线宽选择
+   - 类别按钮: 水面/摊面/分界线/坝体
    - 自动切分大图为训练样本
 3. **模型训练**: 训练YOLO分类模型
    - 选择数据目录
-   - 设置训练轮数
+   - 设置训练参数（轮数、批量大小、图像尺寸等）
    - 自动划分训练集/验证集(80/20)
 4. **识别**: 使用训练好的模型识别图像
    - 加载YOLO模型
@@ -75,18 +77,21 @@ python main.py train --data data/training --epochs 100 --output models/
 
 ### 标记分割
 
-1. 打开或拖入图片
-2. 选择标注工具(多边形/线段/矩形/点)
-3. 选择类别(water/beach/boundary/dam)
+1. 点击工具按钮打开图片
+2. 选择工具（移动图片/面标记/线标记）+ 线宽（线标记时）
+3. 选择类别（水面/摊面/分界线/坝体）
 4. 在图像上绘制标注
-5. 点击"导出切片"保存训练样本
+   - 面标记: 点击添加顶点，右键撤销，双击完成
+   - 线标记: 点击添加顶点，右键撤销，双击完成，自动转换为带状区域
+5. 设置切片尺寸和步长
+6. 点击"图像分割"保存训练样本
 
 ### 模型训练
 
 1. 在"标记分割"中导出训练数据
 2. 切换到"模型训练"标签页
 3. 点击"选择数据目录"，选择包含分类子目录的数据集
-4. 设置训练轮数
+4. 设置训练参数（默认：5轮，图像尺寸32）
 5. 点击"开始训练"
 6. 训练完成后在识别标签页加载模型
 
@@ -94,7 +99,7 @@ python main.py train --data data/training --epochs 100 --output models/
 
 1. 加载训练好的模型(.pt文件)
 2. 打开待识别的图片
-3. 设置切片尺寸(24-128)和步长
+3. 设置切片尺寸和步长
 4. 点击"运行识别"
 5. 查看带彩色叠加的结果图
 6. 保存结果
@@ -102,10 +107,10 @@ python main.py train --data data/training --epochs 100 --output models/
 ## 识别结果说明
 
 识别结果使用彩色叠加显示各类别:
-- **水面(water)**: 蓝色 (0, 200, 255)
-- **滩面(beach)**: 绿色 (200, 255, 0)
+- **水面(water)**: 浅蓝色 (255, 200, 0)
+- **摊面(beach)**: 黄绿色 (0, 255, 200)
 - **分界线(boundary)**: 紫色 (255, 0, 255)
-- **坝体(dam)**: 橙色 (255, 100, 0)
+- **坝体(dam)**: 橙色 (0, 100, 255)
 
 ## 依赖库
 
@@ -113,6 +118,7 @@ python main.py train --data data/training --epochs 100 --output models/
 - numpy >= 1.24.0
 - ultralytics >= 8.0.0
 - PyQt6 >= 6.5.0
+- torch >= 2.0.0
 
 ## 许可证
 
