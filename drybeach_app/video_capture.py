@@ -1,3 +1,11 @@
+"""
+干滩识别系统 - 视频捕获模块
+用于从视频文件中提取帧图像
+
+Classes:
+    VideoFrameExtractor: 视频帧提取器
+"""
+
 import cv2
 import numpy as np
 from pathlib import Path

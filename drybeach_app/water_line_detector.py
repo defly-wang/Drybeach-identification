@@ -1,3 +1,11 @@
+"""
+干滩识别系统 - 水线检测模块
+基于边缘检测和图像处理的水线检测算法
+
+Classes:
+    WaterLineDetector: 水线检测器，使用边缘检测方法
+"""
+
 import cv2
 import numpy as np
 from typing import List, Tuple, Optional, Dict

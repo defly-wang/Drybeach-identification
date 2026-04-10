@@ -1,3 +1,10 @@
+"""
+干滩识别系统 - 主窗口模块
+应用程序主窗口，整合所有功能模块的图形界面
+
+MainWindow: 主窗口类，管理所有标签页和功能模块
+"""
+
 import sys
 from pathlib import Path
 from typing import Tuple

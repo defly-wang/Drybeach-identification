@@ -1,3 +1,10 @@
+"""
+干滩识别系统 - 水线检测模块UI
+水线检测功能界面，支持图像加载、ROI绘制和水线检测
+
+WaterLineTab: 水线检测功能标签页
+"""
+
 from pathlib import Path
 
 import cv2

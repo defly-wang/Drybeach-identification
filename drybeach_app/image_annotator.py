@@ -1,3 +1,14 @@
+"""
+干滩识别系统 - 图像标注模块
+用于图像标注、轮廓绘制和批量切片处理
+
+Classes:
+    RegionOfInterest: 感兴趣区域(ROI)
+    Annotation: 标注数据类
+    ImageAnnotator: 图像标注器
+    BatchImageSlicer: 批量图像切片器
+"""
+
 import cv2
 import numpy as np
 from pathlib import Path

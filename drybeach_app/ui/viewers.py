@@ -1,3 +1,12 @@
+"""
+干滩识别系统 - 图像显示模块
+支持图像显示、ROI绘制、多边形绘制的自定义QWidget
+
+ImageViewer: 通用图像显示器
+MarkImageViewer: 标注图像显示器，支持多类别区域绘制
+WaterLineViewer: 水线图像显示器，支持折线绘制
+"""
+
 import cv2
 import numpy as np
 from typing import Optional, Tuple

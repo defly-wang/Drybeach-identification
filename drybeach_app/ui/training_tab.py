@@ -1,3 +1,10 @@
+"""
+干滩识别系统 - 训练模块UI
+模型训练功能界面，包括数据选择、参数设置、训练执行和结果保存
+
+TrainingTab: 模型训练功能标签页
+"""
+
 from pathlib import Path
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 

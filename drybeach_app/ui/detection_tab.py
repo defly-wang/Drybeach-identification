@@ -1,3 +1,10 @@
+"""
+干滩识别系统 - 识别模块UI
+图像识别功能界面，包括模型加载、区域设置、识别执行和结果显示
+
+DetectionTab: 识别功能标签页
+"""
+
 from pathlib import Path
 
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,

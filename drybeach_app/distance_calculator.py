@@ -1,3 +1,11 @@
+"""
+干滩识别系统 - 距离计算模块
+基于相机校准的距离测量和坐标系转换
+
+Classes:
+    DistanceCalculator: 距离计算器
+"""
+
 import cv2
 import numpy as np
 from typing import List, Tuple, Optional, Dict

@@ -1,3 +1,14 @@
+"""
+干滩识别系统 - 图像识别模块
+基于CNN分类模型的图像识别，用于识别水面、滩面、分界线和坝体
+
+Classes:
+    DetectionResult: 识别结果数据类
+    BoundaryLineGenerator: 分界线生成器
+    CNNClassifier: CNN分类网络
+    DryBeachRecognizer: 识别器主类
+"""
+
 import cv2
 import numpy as np
 from pathlib import Path

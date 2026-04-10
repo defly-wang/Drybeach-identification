@@ -1,3 +1,11 @@
+"""
+干滩识别系统 - 后台处理线程模块
+用于在后台执行耗时任务的QThread实现
+
+ProcessingThread: 后台处理线程
+VideoExtractThread: 视频提取线程
+"""
+
 from pathlib import Path
 from PyQt6.QtCore import QThread, pyqtSignal
 

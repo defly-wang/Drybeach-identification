@@ -1,3 +1,13 @@
+"""
+干滩识别系统 - 模型训练模块
+支持CNN分类模型的训练和YOLO目标检测模型的训练
+
+Classes:
+    ClassificationDataset: 分类数据集
+    SimpleCNNClassifier: 简单CNN分类网络
+    ModelTrainer: 模型训练器主类
+"""
+
 import numpy as np
 from pathlib import Path
 from typing import List, Tuple, Optional, Dict

@@ -1,3 +1,11 @@
+"""
+干滩识别系统 - 坝体检测模块
+基于纹理分析的坝体边缘检测算法
+
+Classes:
+    DamEdgeDetector: 坝体边缘检测器
+"""
+
 import cv2
 import numpy as np
 from typing import List, Tuple, Optional, Dict

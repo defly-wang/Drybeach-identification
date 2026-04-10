@@ -1,3 +1,10 @@
+"""
+干滩识别系统 - 视频提取模块UI
+视频处理功能界面，支持视频帧提取和保存
+
+VideoExtractWidget: 视频提取功能标签页
+"""
+
 from pathlib import Path
 from typing import List
 

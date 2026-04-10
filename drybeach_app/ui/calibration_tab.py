@@ -1,3 +1,10 @@
+"""
+干滩识别系统 - 校准模块UI
+相机校准功能界面，支持参考点设置和距离校准
+
+CalibrationTab: 相机校准功能标签页
+"""
+
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QDoubleSpinBox)
 from PyQt6.QtCore import pyqtSignal

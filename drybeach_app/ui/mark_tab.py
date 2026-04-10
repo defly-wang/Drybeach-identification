@@ -1,3 +1,10 @@
+"""
+干滩识别系统 - 标记分割模块UI
+图像标注和分割功能界面，支持多类别区域绘制和标注保存
+
+MarkSegmentationWidget: 标注分割功能标签页
+"""
+
 from pathlib import Path
 
 import cv2
