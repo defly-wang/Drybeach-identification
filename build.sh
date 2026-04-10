@@ -1,96 +1,78 @@
 #!/bin/bash
 # 打包脚本 - 使用 PyInstaller 将干滩识别系统打包为可执行文件
+# 
+# 使用方法: 
+#   bash build.sh          # 标准打包
+#   bash build.sh --clean  # 清理后打包
+#   bash build.sh --debug  # 调试模式打包
+#
+# 打包时间可能较长（5-15分钟），请耐心等待
+#
+# 输出: dist/DryBeach
 
-# 确保在项目根目录
-cd "$(dirname "$0")"
+set -e
 
-echo "开始打包干滩识别系统..."
+# 获取脚本所在目录
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
-# 检查并安装依赖
-if ! command -v pyinstaller &> /dev/null; then
-    echo "安装 PyInstaller..."
+# 检查虚拟环境
+if [ -d ".venv" ]; then
+    PYTHON=".venv/bin/python"
+else
+    PYTHON="python3"
+fi
+
+echo "========================================="
+echo "  干滩识别系统 - PyInstaller 打包脚本"
+echo "========================================="
+echo ""
+
+# 检查 PyInstaller
+if ! $PYTHON -c "import PyInstaller" 2>/dev/null; then
+    echo "[1/4] 安装 PyInstaller..."
     pip install pyinstaller
 fi
 
-# 创建 spec 文件
-cat > drybeach.spec << 'EOF'
-# -*- mode: python ; coding: utf-8 -*-
+# 清理选项
+CLEAN=""
+if [ "$1" = "--clean" ]; then
+    echo "[2/4] 清理旧文件..."
+    rm -rf build dist *.spec
+fi
 
-block_cipher = None
+echo "[3/4] 开始打包（这可能需要5-15分钟）..."
+echo "      - 处理 PyQt6"
+echo "      - 处理 OpenCV"
+echo "      - 处理 PyTorch"
+echo ""
 
-a = Analysis(
-    ['main.py'],
-    pathex=[],
-    binaries=[],
-    datas=[
-        ('config/*.json', 'config'),
-    ],
-    hiddenimports=[
-        'cv2',
-        'numpy',
-        'torch',
-        'ultralytics',
-        'PyQt6',
-        'PyQt6.QtCore',
-        'PyQt6.QtGui',
-        'PyQt6.QtWidgets',
-    ],
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=[],
-    win_no_prefer_redirects=False,
-    win_private_assemblies=False,
-    cipher=block_cipher,
-    noarchive=False,
-)
+# 打包命令
+$PYTHON -m PyInstaller main.py \
+    --name DryBeach \
+    --onefile \
+    --windowed \
+    --noconfirm \
+    --add-data "config:config" \
+    --hidden-import cv2 \
+    --hidden-import numpy \
+    --hidden-import torch \
+    --hidden-import ultralytics \
+    --hidden-import PyQt6 \
+    --hidden-import PyQt6.QtCore \
+    --hidden-import PyQt6.QtGui \
+    --hidden-import PyQt6.QtWidgets \
+    --collect-all cv2 \
+    --collect-all torch \
+    --collect-all ultralytics
 
-pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
-
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='DryBeachIdentification',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    console=False,
-    disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=None,
-)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='DryBeachIdentification',
-)
-EOF
-
-echo "创建 PyInstaller spec 文件完成"
-
-# 执行打包
-echo "开始打包..."
-pyinstaller drybeach.spec --clean
-
-# 清理临时文件
-echo "清理临时文件..."
-rm -f drybeach.spec
-
-echo "打包完成！"
-echo "输出目录: dist/DryBeachIdentification"
+echo ""
+echo "[4/4] 打包完成！"
+echo ""
+echo "输出文件: dist/DryBeach"
+echo ""
+echo "提示: 如果打包失败，可尝试以下操作:"
+echo "  1. 确保虚拟环境 .venv 已激活"
+echo "  2. 运行: pip install -r requirements.txt"
+echo "  3. 确保 main.py 可以正常运行"
+echo ""
