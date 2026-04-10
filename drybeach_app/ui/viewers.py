@@ -365,16 +365,24 @@ class MarkImageViewer(QWidget):
         
         self.mode = 'normal'
         self.current_category = None
-        self.regions = {'水面': [], '摊面': [], '分界线': [], '坝体': []}
+        self.regions = {'水面': [], '摊面': [], '分界线': [], '坝体': [], '线标记': []}
         self.region_colors = {
-            '水面': (0, 200, 255),
-            '摊面': (200, 255, 0),
+            '水面': (255, 200, 0),
+            '摊面': (0, 255, 200),
             '分界线': (255, 0, 255),
-            '坝体': (255, 100, 0)
+            '坝体': (0, 100, 255),
+            '线标记': (255, 0, 0)
         }
         
         self.polygon_points = []
         self._mouse_pos = None
+        
+        self._drag_start = None
+        self._scroll_start_x = 0
+        self._scroll_start_y = 0
+        
+        self.is_line_mode = False
+        self.line_width = 16
         
         self._zoom_factor = 1.0
         self._min_zoom = 0.1
@@ -445,20 +453,39 @@ class MarkImageViewer(QWidget):
             
             for polygon in polygons:
                 points = polygon['points']
-                if len(points) >= 3:
+                is_line = polygon.get('is_line', False)
+                
+                if is_line and len(points) >= 2:
+                    for i in range(len(points) - 1):
+                        p1 = points[i]
+                        p2 = points[i + 1]
+                        painter.drawLine(int(p1[0] * scale_x), int(p1[1] * scale_y),
+                                        int(p2[0] * scale_x), int(p2[1] * scale_y))
+                    
+                    if points:
+                        center_x = sum(p[0] for p in points) / len(points) * scale_x
+                        center_y = sum(p[1] for p in points) / len(points) * scale_y
+                        painter.setPen(QPen(qt_color, 1))
+                        font = painter.font()
+                        font.setPointSize(10)
+                        font.setBold(True)
+                        painter.setFont(font)
+                        painter.drawText(int(center_x), int(center_y), category)
+                elif len(points) >= 3:
                     for i in range(len(points)):
                         p1 = points[i]
                         p2 = points[(i + 1) % len(points)]
                         painter.drawLine(int(p1[0] * scale_x), int(p1[1] * scale_y),
                                         int(p2[0] * scale_x), int(p2[1] * scale_y))
                     
-                    min_x = min(p[0] * scale_x for p in points)
-                    min_y = min(p[1] * scale_y for p in points)
+                    center_x = sum(p[0] for p in points) / len(points) * scale_x
+                    center_y = sum(p[1] for p in points) / len(points) * scale_y
                     painter.setPen(QPen(qt_color, 1))
                     font = painter.font()
                     font.setPointSize(10)
+                    font.setBold(True)
                     painter.setFont(font)
-                    painter.drawText(int(min_x) + 5, int(min_y) + 15, category)
+                    painter.drawText(int(center_x), int(center_y), category)
         
         if self.mode == 'draw' and self.current_category and self.polygon_points:
             color = self.region_colors.get(self.current_category, (255, 255, 0))
@@ -513,6 +540,13 @@ class MarkImageViewer(QWidget):
         
         pos = event.position().toPoint()
         
+        if self.mode == 'move':
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._drag_start = pos
+                self._scroll_start_x = self.scroll_area.horizontalScrollBar().value()
+                self._scroll_start_y = self.scroll_area.verticalScrollBar().value()
+            return
+        
         if event.button() == Qt.MouseButton.RightButton:
             if self.mode == 'draw' and self.current_category:
                 if self.polygon_points:
@@ -539,6 +573,16 @@ class MarkImageViewer(QWidget):
         
         pos = event.position().toPoint()
         
+        if self.mode == 'move' and self._drag_start:
+            delta_x = pos.x() - self._drag_start.x()
+            delta_y = pos.y() - self._drag_start.y()
+            
+            h_bar = self.scroll_area.horizontalScrollBar()
+            v_bar = self.scroll_area.verticalScrollBar()
+            h_bar.setValue(self._scroll_start_x - delta_x)
+            v_bar.setValue(self._scroll_start_y - delta_y)
+            return
+        
         if 0 <= pos.x() < self.displayed_size.width() and 0 <= pos.y() < self.displayed_size.height():
             scale_x = self.current_pixmap.width() / self.displayed_size.width() if self.displayed_size.width() > 0 else 1.0
             scale_y = self.current_pixmap.height() / self.displayed_size.height() if self.displayed_size.height() > 0 else 1.0
@@ -555,6 +599,10 @@ class MarkImageViewer(QWidget):
             self._mouse_pos = None
     
     def _canvas_mouse_release(self, event):
+        if self.mode == 'move':
+            self._drag_start = None
+            return
+        
         if event.button() == Qt.MouseButton.RightButton:
             pass
     
@@ -563,18 +611,64 @@ class MarkImageViewer(QWidget):
             return
         
         if event.button() == Qt.MouseButton.LeftButton and self.mode == 'draw' and self.current_category:
-            if len(self.polygon_points) >= 3:
-                self.regions[self.current_category].append({
-                    'points': list(self.polygon_points)
-                })
+            min_points = 2 if self.is_line_mode else 3
+            
+            if len(self.polygon_points) >= min_points:
+                if self.is_line_mode:
+                    polygon_points = self._line_to_polygon(self.polygon_points, self.line_width)
+                    self.regions[self.current_category].append({
+                        'points': polygon_points,
+                        'is_line': False,
+                        'line_width': self.line_width
+                    })
+                else:
+                    self.regions[self.current_category].append({
+                        'points': list(self.polygon_points),
+                        'is_line': False
+                    })
                 self.region_drawn.emit(self.current_category, tuple(self.polygon_points))
             
             self.polygon_points = []
             self._mouse_pos = None
             self._update_display()
     
+    def _line_to_polygon(self, points, width):
+        if len(points) < 2:
+            return list(points)
+        
+        half_width = width / 2
+        left_points = []
+        right_points = []
+        
+        for i in range(len(points)):
+            if i == 0:
+                p1 = points[i]
+                p2 = points[i + 1]
+            elif i == len(points) - 1:
+                p1 = points[i - 1]
+                p2 = points[i]
+            else:
+                p1 = points[i - 1]
+                p2 = points[i + 1]
+            
+            dx = p2[0] - p1[0]
+            dy = p2[1] - p1[1]
+            
+            length = (dx * dx + dy * dy) ** 0.5
+            if length == 0:
+                length = 1
+            
+            nx = -dy / length * half_width
+            ny = dx / length * half_width
+            
+            left_points.append((points[i][0] + nx, points[i][1] + ny))
+            right_points.append((points[i][0] - nx, points[i][1] - ny))
+        
+        polygon = left_points + list(reversed(right_points))
+        return polygon
+    
     def clear_regions(self):
-        self.regions = {'水面': [], '摊面': [], '分界线': [], '坝体': []}
+        self.regions = {'水面': [], '摊面': [], '分界线': [], '坝体': [], '线标记': []}
         self.polygon_points = []
         self._mouse_pos = None
         self._update_display()

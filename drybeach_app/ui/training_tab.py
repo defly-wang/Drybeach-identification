@@ -44,7 +44,7 @@ class TrainingTab(QWidget):
         param_layout.addWidget(QLabel("训练轮数:"), 0, 0)
         self.spin_epochs = QSpinBox()
         self.spin_epochs.setRange(1, 500)
-        self.spin_epochs.setValue(50)
+        self.spin_epochs.setValue(5)
         param_layout.addWidget(self.spin_epochs, 0, 1)
         
         param_layout.addWidget(QLabel("批量大小:"), 0, 2)
@@ -56,7 +56,7 @@ class TrainingTab(QWidget):
         param_layout.addWidget(QLabel("图像尺寸:"), 1, 0)
         self.spin_imgsz = QSpinBox()
         self.spin_imgsz.setRange(32, 512)
-        self.spin_imgsz.setValue(64)
+        self.spin_imgsz.setValue(32)
         self.spin_imgsz.setSingleStep(32)
         param_layout.addWidget(self.spin_imgsz, 1, 1)
         
