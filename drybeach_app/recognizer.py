@@ -1,12 +1,12 @@
 """
-干滩识别系统 - 图像识别模块
+干滩识别系统 - 识别模块
 基于CNN分类模型的图像识别，用于识别水面、滩面、分界线和坝体
 
 Classes:
-    DetectionResult: 识别结果数据类
-    BoundaryLineGenerator: 分界线生成器
-    CNNClassifier: CNN分类网络
-    DryBeachRecognizer: 识别器主类
+    DetectionResult: 识别结果数据类，包含分类结果、检测点和分界线
+    BoundaryLineGenerator: 分界线生成器，根据检测点生成平滑的分界线
+    CNNClassifier: CNN分类网络架构
+    DryBeachRecognizer: 识别器主类，执行滑动窗口分类和结果可视化
 """
 
 import cv2
@@ -28,14 +28,26 @@ except ImportError:
 
 
 class DetectionResult:
+    """
+    识别结果数据类
+    
+    存储图像识别的所有结果数据，包括:
+    - class_map: 分类结果图像
+    - annotated_image: 带标注的可视化图像
+    - class_counts: 各类别的像素/区域计数
+    - detection_points: 检测到的所有点列表
+    - boundary_lines: 生成的边界线列表
+    """
+    
     def __init__(self):
-        self.class_map = None
-        self.annotated_image = None
-        self.class_counts = {}
-        self.detection_points = []
-        self.boundary_lines = []
+        self.class_map = None           # 分类结果掩码
+        self.annotated_image = None     # 带标注的图像
+        self.class_counts = {}          # 各类别计数 {类别名: 数量}
+        self.detection_points = []      # 检测点列表 [{x, y, class_id, confidence}, ...]
+        self.boundary_lines = []        # 边界线列表 [{type, points, num_points}, ...]
     
     def to_dict(self) -> Dict:
+        """将结果转换为字典格式"""
         return {
             'class_map': self.class_map,
             'class_counts': self.class_counts,
@@ -45,30 +57,65 @@ class DetectionResult:
 
 
 class BoundaryLineGenerator:
+    """
+    分界线生成器
+    
+    根据识别结果中的分界线点(class_id=2)，生成平滑的边界线。
+    核心算法:
+    1. 筛选分界线类别点
+    2. 使用BFS按相邻性分组(每个连通区域一个组)
+    3. 对每个区域内的点计算中心线路径
+    4. 平滑处理并连接
+    
+    类别ID:
+    - 0: water (水面) - 浅蓝色
+    - 1: beach (滩面) - 黄绿色
+    - 2: boundary (分界线) - 紫色
+    - 3: dam (坝体) - 橙色
+    """
+    
+    # 类别名称列表
     CATEGORY_NAMES = ['water', 'beach', 'boundary', 'dam']
+    # 分界线的类别ID
     BOUNDARY_CLASS_ID = 2
     
     @staticmethod
     def generate_boundary_lines(detection_points: List[Dict], image_shape: Tuple[int, int], 
                                 stride: int = 16) -> List[Dict]:
+        """
+        生成边界线的主函数
+        
+        Args:
+            detection_points: 所有检测点列表，每个点包含x, y, class_id, confidence
+            image_shape: 图像形状 (height, width, channels)
+            stride: 识别时的步长，用于确定相邻点阈值
+        
+        Returns:
+            边界线列表，每个元素包含type, points, num_points
+        """
         if not detection_points:
             return []
         
+        # 筛选出分界线类别的点
         boundary_points = [p for p in detection_points if p['class_id'] == BoundaryLineGenerator.BOUNDARY_CLASS_ID]
         
         if len(boundary_points) < 3:
             logger.warning("Not enough boundary points")
             return []
         
+        # 转换为numpy数组便于处理
         points = np.array([[p['x'], p['y']] for p in boundary_points])
         
+        # 按相邻性将点分组为连通区域
         regions = BoundaryLineGenerator._group_by_adjacency(points, stride)
         
+        # 对每个区域生成中心线
         boundary_lines = []
         for region_points in regions:
             if len(region_points) < 3:
                 continue
             
+            # 计算该区域的中心线
             center_line = BoundaryLineGenerator._compute_center_line(region_points)
             
             if center_line and len(center_line) > 2:
@@ -83,18 +130,33 @@ class BoundaryLineGenerator:
     
     @staticmethod
     def _group_by_adjacency(points: np.ndarray, stride: int) -> List[np.ndarray]:
+        """
+        使用BFS按相邻性将点分组为连通区域
+        
+        相邻判定: 两点距离 < stride * 1.2
+        
+        Args:
+            points: 所有分界线点坐标 (N, 2)
+            stride: 识别步长
+        
+        Returns:
+            连通区域列表，每个元素是一个区域的点数组
+        """
         if len(points) == 0:
             return []
         
+        # 相邻阈值: 步长的1.2倍
         eps = stride * 1.2
         n = len(points)
         used = np.zeros(n, dtype=bool)
         regions = []
         
+        # BFS遍历所有点
         for i in range(n):
             if used[i]:
                 continue
             
+            # 找到当前连通区域的所有点
             cluster = [i]
             used[i] = True
             queue = [i]
@@ -103,6 +165,7 @@ class BoundaryLineGenerator:
                 idx = queue.pop(0)
                 for j in range(n):
                     if not used[j]:
+                        # 计算欧氏距离
                         dist = np.sqrt((points[idx, 0] - points[j, 0])**2 + 
                                       (points[idx, 1] - points[j, 1])**2)
                         if dist < eps:
@@ -112,20 +175,37 @@ class BoundaryLineGenerator:
             
             regions.append(points[cluster])
         
+        # 按Y坐标最小值排序
         regions.sort(key=lambda r: np.min(r[:, 1]))
         
         return regions
     
     @staticmethod
     def _compute_center_line(points: np.ndarray) -> List[List[int]]:
+        """
+        计算区域内的中心线路径
+        
+        根据点云的分布方向，选择合适的路径计算方法:
+        - 水平分布为主: 按X轴追踪
+        - 垂直分布为主: 按Y轴追踪
+        - 其他: 一般追踪方法
+        
+        Args:
+            points: 区域内的点坐标 (N, 2)
+        
+        Returns:
+            中心线点列表 [[x, y], ...]
+        """
         if len(points) < 3:
             return [[int(p[0]), int(p[1])] for p in points]
         
         pts = points.astype(float)
         
+        # 计算点云的范围
         x_range = np.max(pts[:, 0]) - np.min(pts[:, 0])
         y_range = np.max(pts[:, 1]) - np.min(pts[:, 1])
         
+        # 根据主方向选择追踪方法
         if x_range > y_range * 1.5:
             return BoundaryLineGenerator._trace_path_horizontal(pts)
         elif y_range > x_range * 1.5:
