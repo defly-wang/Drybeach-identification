@@ -86,7 +86,7 @@ class BoundaryLineGenerator:
         if len(points) == 0:
             return []
         
-        eps = stride * 1.5
+        eps = stride * 1.2
         n = len(points)
         used = np.zeros(n, dtype=bool)
         regions = []
